@@ -3,11 +3,17 @@
 import { useState } from 'react';
 import { Users, FileText, Loader2, CheckCircle, AlertCircle } from 'lucide-react';
 
+type DispatchResult = {
+    phoneNumber: string;
+    status: 'dispatched' | 'failed';
+    error?: string;
+};
+
 export default function BulkDialer() {
     const [input, setInput] = useState('');
     const [prompt, setPrompt] = useState('');
     const [status, setStatus] = useState<'idle' | 'loading' | 'success' | 'error'>('idle');
-    const [results, setResults] = useState<any[]>([]);
+    const [results, setResults] = useState<DispatchResult[]>([]);
 
     const handleBulkDispatch = async (e: React.FormEvent) => {
         e.preventDefault();
@@ -37,7 +43,7 @@ export default function BulkDialer() {
             } else {
                 setStatus('error');
             }
-        } catch (err: any) {
+        } catch {
             setStatus('error');
         }
     };

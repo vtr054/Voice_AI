@@ -3,6 +3,10 @@
 import { useState } from 'react';
 import { Phone, MessageSquare, Loader2, Sparkles } from 'lucide-react';
 
+function errorMessage(error: unknown) {
+    return error instanceof Error ? error.message : 'Network error';
+}
+
 export default function CallDispatcher() {
     const [phoneNumber, setPhoneNumber] = useState('');
     const [prompt, setPrompt] = useState('');
@@ -34,9 +38,9 @@ export default function CallDispatcher() {
                 setStatus('error');
                 setMessage(data.error || 'Failed to dispatch call');
             }
-        } catch (err: any) {
+        } catch (err: unknown) {
             setStatus('error');
-            setMessage(err.message || 'Network error');
+            setMessage(errorMessage(err));
         }
     };
 

@@ -1,9 +1,20 @@
 import { NextResponse } from 'next/server';
-import { sipClient, roomService } from '@/lib/server-utils';
+import { getLiveKitClients } from '@/lib/server-utils';
+
+type DispatchBody = {
+    phoneNumber?: string;
+    prompt?: string;
+    modelProvider?: string;
+    voice?: string;
+};
+
+function errorMessage(error: unknown) {
+    return error instanceof Error ? error.message : "Internal Server Error";
+}
 
 export async function POST(request: Request) {
     try {
-        const body = await request.json();
+        const body = (await request.json()) as DispatchBody;
         const { phoneNumber, prompt, modelProvider, voice } = body;
 
         if (!phoneNumber) {
@@ -15,6 +26,7 @@ export async function POST(request: Request) {
             console.error("VOBIZ_SIP_TRUNK_ID is missing in env");
             return NextResponse.json({ error: "SIP Trunk not configured" }, { status: 500 });
         }
+        const { roomService, sipClient } = getLiveKitClients();
 
         // Generate a unique room name for this call
         const roomName = `call-${phoneNumber.replace(/\+/g, '')}-${Math.floor(Math.random() * 10000)}`;
@@ -46,6 +58,12 @@ export async function POST(request: Request) {
             voice_id: voice || "alloy"
         });
 
+        await roomService.createRoom({
+            name: roomName,
+            metadata,
+            emptyTimeout: 60 * 5,
+        });
+
         const info = await sipClient.createSipParticipant(
             trunkId,
             phoneNumber,
@@ -53,7 +71,6 @@ export async function POST(request: Request) {
             {
                 participantIdentity: particpantIdentity,
                 participantName: "Customer",
-                roomMetadata: metadata, // Pass metadata so Agent knows context
             }
         );
 
@@ -63,8 +80,8 @@ export async function POST(request: Request) {
             dispatchId: info.sipCallId
         });
 
-    } catch (error: any) {
+    } catch (error: unknown) {
         console.error("Error dispatching call:", error);
-        return NextResponse.json({ error: error.message || "Internal Server Error" }, { status: 500 });
+        return NextResponse.json({ error: errorMessage(error) }, { status: 500 });
     }
 }

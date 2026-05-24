@@ -1,9 +1,25 @@
 import { NextResponse } from 'next/server';
-import { roomService, sipClient } from '@/lib/server-utils';
+import { getLiveKitClients } from '@/lib/server-utils';
+
+type QueueBody = {
+    numbers?: string[];
+    prompt?: string;
+};
+
+type QueueResult = {
+    phoneNumber: string;
+    status: 'dispatched' | 'failed';
+    id?: string;
+    error?: string;
+};
+
+function errorMessage(error: unknown) {
+    return error instanceof Error ? error.message : "Internal Server Error";
+}
 
 export async function POST(request: Request) {
     try {
-        const body = await request.json();
+        const body = (await request.json()) as QueueBody;
         const { numbers, prompt } = body;
 
         if (!numbers || !Array.isArray(numbers) || numbers.length === 0) {
@@ -14,8 +30,9 @@ export async function POST(request: Request) {
         if (!trunkId) {
             return NextResponse.json({ error: "SIP Trunk not configured" }, { status: 500 });
         }
+        const { roomService, sipClient } = getLiveKitClients();
 
-        const results = [];
+        const results: QueueResult[] = [];
 
         // Process casually to avoid rate limits (simple queue)
         // In a real production environment, push these to a Redis queue like BullMQ
@@ -50,9 +67,9 @@ export async function POST(request: Request) {
                 // Artificial delay to prevent API flooding (200ms)
                 await new Promise(r => setTimeout(r, 200));
 
-            } catch (e: any) {
+            } catch (e: unknown) {
                 console.error(`Failed to dispatch ${phoneNumber}:`, e);
-                results.push({ phoneNumber, status: 'failed', error: e.message });
+                results.push({ phoneNumber, status: 'failed', error: errorMessage(e) });
             }
         }
 
@@ -62,8 +79,8 @@ export async function POST(request: Request) {
             results
         });
 
-    } catch (error: any) {
+    } catch (error: unknown) {
         console.error("Queue error:", error);
-        return NextResponse.json({ error: error.message }, { status: 500 });
+        return NextResponse.json({ error: errorMessage(error) }, { status: 500 });
     }
 }

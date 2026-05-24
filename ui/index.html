@@ -1,0 +1,1877 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>OutboundAI — Dashboard</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>⚡</text></svg>">
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
+<style>
+/* Light theme CSS variables based on branding */
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Orbitron:wght@400;700&family=Share+Tech+Mono&display=swap');
+
+:root{
+  --bg: #0D1B2A;
+  --card: #152238;
+  --border: #2E4057;
+  --primary: #FFB000;
+  --secondary: rgba(255, 176, 0, 0.1);
+  --accent: #FFB000;
+  --danger: #ff4444;
+  --warn: #ffaa00;
+  --muted: #8a9bb1;
+  --text: #E8DCC4;
+  --text2: #B3A894;
+  --mono: 'Share Tech Mono', monospace;
+  --sans: 'Share Tech Mono', monospace;
+  --heading: 'Orbitron', sans-serif;
+  --r: 0px;
+  --spacing-1: 4px;
+  --spacing-2: 8px;
+  --spacing-3: 12px;
+  --spacing-4: 16px;
+  --spacing-5: 20px;
+  --spacing-6: 24px;
+  --spacing-8: 32px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+html { scroll-behavior: smooth; }
+
+::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar-track { background: var(--bg); }
+::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 4px; }
+::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
+
+body { background:var(--bg); color:var(--text); font-family:var(--sans); min-height:100vh; line-height:1.5; font-size:14px; margin: 0; padding: 0; overflow: hidden; }
+.app-layout { display: flex; height: 100vh; overflow: hidden; }
+
+/* Sidebar */
+.sidebar { 
+    width: 240px; 
+    background: rgba(10, 10, 10, 0.8); 
+    backdrop-filter: blur(10px);
+    border-right: 1px solid rgba(255, 255, 255, 0.08); 
+    display: flex; 
+    flex-direction: column; 
+    transition: width 0.3s cubic-bezier(0.4, 0, 0.2, 1); 
+    flex-shrink: 0;
+    z-index: 100;
+}
+.sidebar.collapsed { width: 68px; }
+
+.sidebar-header { 
+    padding: var(--spacing-4); 
+    display: flex; 
+    align-items: center; 
+    justify-content: space-between; 
+    border-bottom: 1px solid var(--border);
+    height: 72px; 
+}
+.logo { font-family: var(--heading); font-weight: bold; font-size: 18px; color: var(--primary); display: flex; align-items: center; gap: var(--spacing-2); text-transform: uppercase; letter-spacing: 2px; white-space: nowrap; }
+.sidebar.collapsed .logo-text { display: none; }
+
+.hamburger { 
+    background: transparent; border: none; color: var(--text); font-size: 20px; 
+    cursor: pointer; box-shadow: none; padding: var(--spacing-2); flex-shrink: 0;
+    transition: transform 0.4s cubic-bezier(0.4, 0, 0.2, 1), color 0.2s;
+}
+.hamburger:hover { color: var(--primary); transform: scale(1.1); box-shadow: none; }
+.hamburger:active { transform: scale(0.96); }
+.sidebar.collapsed .hamburger { transform: rotate(180deg); }
+.sidebar.collapsed .hamburger:hover { transform: rotate(180deg) scale(1.1); }
+.sidebar.collapsed .hamburger:active { transform: rotate(180deg) scale(0.96); }
+
+.sidebar-nav { padding: var(--spacing-4) 0; display: flex; flex-direction: column; gap: 2px; overflow-y: auto; overflow-x: hidden; }
+.sidebar-nav::-webkit-scrollbar { width: 4px; }
+
+.nav-group {
+    font-family: 'Inter', sans-serif; font-size: 13px; font-weight: 600;
+    color: rgba(255,255,255,0.4); font-variant: small-caps; letter-spacing: 1.5px;
+    margin: 24px 20px 8px 32px; line-height: 1.8;
+}
+.nav-group:first-child { margin-top: 8px; }
+.sidebar.collapsed .nav-group { display: none; }
+
+.tab { 
+    position: relative; display: flex; align-items: center; gap: 14px; 
+    padding: 10px 20px; cursor: pointer; color: var(--muted); 
+    border-radius: 8px; margin: 2px 12px; border-left: 3px solid transparent;
+    transition: background-color 0.2s, color 0.2s, transform 0.2s cubic-bezier(0.4, 0, 0.2, 1); white-space: nowrap; 
+    font-size: 14px; font-family: 'Inter', sans-serif; letter-spacing: 0.5px; 
+}
+.tab:hover { color: var(--text); background: rgba(255, 255, 255, 0.05); transform: translateX(4px); }
+.tab:active { transform: scale(0.98) translateX(4px); }
+.tab.active { color: var(--primary); background: linear-gradient(90deg, rgba(255, 176, 0, 0.15) 0%, rgba(255, 176, 0, 0.0) 100%); font-weight: 600; box-shadow: none; transform: none; }
+.tab.active .tab-icon { filter: drop-shadow(0 0 6px rgba(255, 176, 0, 0.6)); }
+.tab.active::before { 
+    content: ''; position: absolute; left: -12px; top: 8px; bottom: 8px; width: 3px; 
+    background: var(--primary); border-radius: 0 3px 3px 0; 
+}
+
+.sidebar.collapsed .tab-text { display: none; }
+.sidebar.collapsed .tab { justify-content: center; padding: 10px 0; margin: 2px 8px; position: relative; }
+.sidebar.collapsed .tab::after {
+    content: attr(title); position: absolute; left: 100%; top: 50%; transform: translateY(-50%) translateX(10px);
+    background: var(--card); color: var(--text); padding: 6px 12px; border-radius: 6px; font-size: 12px;
+    white-space: nowrap; opacity: 0; pointer-events: none; transition: opacity 0.2s, transform 0.2s; z-index: 1000;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.5); border: 1px solid var(--border); font-family: 'Inter', sans-serif; font-weight: 500;
+}
+.sidebar.collapsed .tab:hover::after { opacity: 1; transform: translateY(-50%) translateX(15px); }
+.tab-icon { display: flex; align-items: center; justify-content: center; flex-shrink: 0; width: 20px; height: 20px; }
+
+.main-wrapper { flex-grow: 1; overflow-y: auto; overflow-x: hidden; background: var(--bg); position: relative; }
+main { padding: var(--spacing-8); max-width: 1400px; margin: 0 auto; min-height: 100%; }
+.panel { display: none; }
+.panel.active { display: block; }
+
+@keyframes fadeInUp {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.panel.active .kpi, .panel.active .card, .panel.active .table-wrap {
+  animation: fadeInUp 0.4s cubic-bezier(0.4, 0, 0.2, 1) both;
+}
+.panel.active .kpi:nth-child(1) { animation-delay: 0.05s; }
+.panel.active .kpi:nth-child(2) { animation-delay: 0.1s; }
+.panel.active .kpi:nth-child(3) { animation-delay: 0.15s; }
+.panel.active .kpi:nth-child(4) { animation-delay: 0.2s; }
+.panel.active .kpi:nth-child(5) { animation-delay: 0.25s; }
+.panel.active .card:nth-child(1) { animation-delay: 0.1s; }
+.panel.active .card:nth-child(2) { animation-delay: 0.2s; }
+.panel.active .card:nth-child(3) { animation-delay: 0.3s; }
+.panel.active .table-wrap { animation-delay: 0.2s; }
+
+/* Components */
+.card { background: var(--card); border: 1px solid var(--border); border-radius: var(--r); padding: var(--spacing-6); margin-bottom: var(--spacing-6); box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.5), 0 2px 4px -1px rgba(0, 0, 0, 0.3); transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1), box-shadow 0.3s cubic-bezier(0.4, 0, 0.2, 1); }
+.card:hover { transform: translateY(-2px); box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.6), 0 4px 6px -2px rgba(0, 0, 0, 0.4); }
+.page-hero { border: 1px solid var(--border); background: linear-gradient(135deg, rgba(255,176,0,0.12), rgba(0,0,0,0.12)); padding: var(--spacing-6); margin-bottom: var(--spacing-6); display:flex; justify-content:space-between; align-items:center; gap:var(--spacing-6); }
+.page-hero h2 { font-size: 28px; margin-bottom: 6px; }
+.hero-actions { display:flex; gap: var(--spacing-3); flex-wrap:wrap; justify-content:flex-end; }
+.stat-strip { display:grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: var(--spacing-3); margin-bottom: var(--spacing-6); }
+.mini-stat { border:1px solid var(--border); background:rgba(0,0,0,0.2); padding:var(--spacing-4); }
+.mini-stat strong { display:block; color:var(--primary); font-size:24px; font-family:var(--mono); }
+.mini-stat span { color:var(--text2); font-size:12px; text-transform:uppercase; font-family:var(--heading); letter-spacing:1px; }
+.grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: var(--spacing-6); margin-bottom: var(--spacing-6); }
+.kpi { text-align: center; padding: var(--spacing-6); background: var(--card); border-radius: var(--r); border: 1px solid var(--border); box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.5), 0 2px 4px -1px rgba(0, 0, 0, 0.3); transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1), box-shadow 0.3s cubic-bezier(0.4, 0, 0.2, 1), border-color 0.3s; }
+.kpi:hover { transform: translateY(-4px); box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.6), 0 4px 6px -2px rgba(0, 0, 0, 0.4); border-color: var(--primary); }
+.kpi h3 { color: var(--text2); font-size: 14px; margin-bottom: var(--spacing-3); font-weight: normal; text-transform: uppercase; letter-spacing: 1px; font-family: var(--heading); }
+.kpi .val { font-size: 36px; font-weight: bold; color: var(--primary); font-family: var(--mono); text-shadow: 0 0 10px rgba(255,176,0,0.3); }
+
+/* Forms */
+.form-group { margin-bottom: var(--spacing-4); }
+label { display: block; margin-bottom: var(--spacing-2); color: var(--text2); font-size: 14px; font-family: var(--heading); text-transform: uppercase; }
+input[type="text"], input[type="password"], input[type="number"], input[type="time"], select, textarea { 
+    width: 100%; padding: var(--spacing-3) var(--spacing-4); background: rgba(0,0,0,0.2); border: 1px solid var(--border); color: var(--text); border-radius: var(--r); font-family: var(--sans); outline: none; transition: border-color 0.2s, box-shadow 0.2s, transform 0.2s;
+}
+input:focus, select:focus, textarea:focus { border-color: var(--primary); box-shadow: 0 0 0 1px var(--primary); transform: translateY(-1px); }
+input[type="checkbox"] { margin-right: var(--spacing-2); accent-color: var(--primary); transform: scale(1.1); cursor: pointer; }
+textarea { resize: vertical; min-height: 100px; }
+button { padding: var(--spacing-3) var(--spacing-5); background: var(--primary); color: var(--bg); border: none; border-radius: var(--r); cursor: pointer; font-weight: bold; font-family: var(--heading); text-transform: uppercase; letter-spacing: 1px; transition: transform 0.2s, opacity 0.2s, box-shadow 0.2s; display: inline-flex; align-items: center; gap: var(--spacing-2); justify-content: center; box-shadow: 0 0 10px rgba(255, 176, 0, 0.2); }
+button:hover { opacity: 0.9; transform: translateY(-2px); box-shadow: 0 0 15px rgba(255, 176, 0, 0.4); }
+button:active { transform: scale(0.96); box-shadow: 0 0 5px rgba(255, 176, 0, 0.2); }
+button.danger { background: rgba(255, 68, 68, 0.1); color: var(--danger); border: 1px solid rgba(255, 68, 68, 0.3); box-shadow: none; }
+button.danger:hover { background: var(--danger); color: white; box-shadow: 0 0 15px rgba(255, 68, 68, 0.4); }
+button.secondary { background: transparent; color: var(--primary); border: 1px solid var(--primary); box-shadow: none; }
+button.secondary:hover { background: rgba(255, 176, 0, 0.1); box-shadow: inset 0 0 10px rgba(255, 176, 0, 0.1); }
+button.ghost { background: rgba(255,255,255,0.04); color: var(--text); border: 1px solid var(--border); box-shadow: none; }
+button.ghost:hover { background: rgba(255,255,255,0.08); box-shadow:none; }
+button:disabled { opacity: 0.5; cursor: not-allowed; transform: none; box-shadow: none; }
+
+/* Tables */
+.table-wrap { overflow-x: auto; background: var(--card); border: 1px solid var(--border); border-radius: var(--r); box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.5); transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1); }
+.table-wrap:hover { transform: translateY(-2px); box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.6); }
+table { width: 100%; border-collapse: collapse; text-align: left; }
+th, td { padding: var(--spacing-4); border-bottom: 1px solid var(--border); font-size: 14px; }
+th { color: var(--primary); font-weight: bold; font-family: var(--heading); text-transform: uppercase; font-size: 12px; letter-spacing: 1px; background: rgba(0,0,0,0.2); }
+table tbody tr { transition: background-color 0.2s, transform 0.2s; }
+table tbody tr:hover { background: var(--secondary); transform: scale(1.002); }
+tr:last-child td { border-bottom: none; }
+
+/* Badges */
+.badge { padding: var(--spacing-1) var(--spacing-3); border-radius: var(--r); font-size: 12px; font-weight: bold; text-transform: uppercase; display: inline-block; font-family: var(--heading); letter-spacing: 1px; }
+.badge.booked, .badge.active, .badge.ok, .badge.completed { background: rgba(255, 176, 0, 0.1); color: var(--primary); border: 1px solid var(--primary); }
+.badge.not_interested, .badge.error, .badge.paused, .badge.failed, .badge.wrong_number, .badge.cancelled { background: rgba(255, 68, 68, 0.1); color: var(--danger); border: 1px solid rgba(255, 68, 68, 0.3); }
+.badge.voicemail, .badge.no_answer, .badge.warning { background: rgba(255, 170, 0, 0.1); color: var(--warn); border: 1px solid rgba(255, 170, 0, 0.3); }
+.badge.dispatched, .badge.info { background: rgba(255, 176, 0, 0.1); color: var(--primary); border: 1px solid var(--primary); }
+.badge.default { background: var(--bg); color: var(--text2); border: 1px solid var(--border); }
+
+/* Utilities */
+.toast { position: fixed; bottom: var(--spacing-6); right: var(--spacing-6); padding: var(--spacing-4) var(--spacing-6); background: var(--card); color: var(--text); border-left: 4px solid var(--primary); border-radius: var(--r); box-shadow: 0 10px 25px rgba(0,0,0,0.5); transform: translateY(100px); opacity: 0; transition: transform 0.3s, opacity 0.3s; z-index: 9999; font-weight: bold; font-family: var(--heading); text-transform: uppercase; letter-spacing: 1px; }
+.toast.show { transform: translateY(0); opacity: 1; }
+.toast.error { border-color: var(--danger); }
+.flex-between { display: flex; justify-content: space-between; align-items: center; }
+.flex { display: flex; gap: var(--spacing-4); }
+.mt-1 { margin-top: var(--spacing-3); } .mt-2 { margin-top: var(--spacing-6); } .mb-1 { margin-bottom: var(--spacing-3); } .mb-2 { margin-bottom: var(--spacing-6); }
+.text-muted { color: var(--text2); }
+.text-center { text-align: center; }
+.hidden { display: none !important; }
+
+/* Progress */
+.progress-bar { width: 100%; height: 8px; background: var(--secondary); border-radius: 4px; overflow: hidden; margin-top: var(--spacing-3); }
+.progress-fill { height: 100%; background: var(--primary); width: 0%; transition: width 0.3s; }
+
+/* Grid Layouts */
+.col-2 { display: grid; grid-template-columns: 1fr 1fr; gap: var(--spacing-6); }
+.col-3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: var(--spacing-6); }
+.checkbox-grid { display:grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: var(--spacing-3); }
+.check-card { border:1px solid var(--border); background:rgba(0,0,0,0.2); padding:var(--spacing-3); display:flex; gap:var(--spacing-2); align-items:flex-start; cursor:pointer; min-height:72px; transition:border-color .2s, background-color .2s, transform .2s; }
+.check-card:hover { border-color:var(--primary); background:rgba(255,176,0,0.08); transform:translateY(-1px); }
+.check-card input:checked + span b { color:var(--primary); }
+.source-list { border-left: 2px solid var(--primary); padding-left: var(--spacing-4); margin-top: var(--spacing-3); color: var(--text2); font-size: 13px; }
+.builder-section { border-top:1px solid var(--border); padding-top:var(--spacing-6); margin-top:var(--spacing-6); }
+.builder-section:first-of-type { border-top:none; padding-top:0; margin-top:0; }
+.builder-heading { display:flex; align-items:center; justify-content:space-between; gap:var(--spacing-4); margin-bottom:var(--spacing-4); }
+.builder-heading h3 { margin:0; }
+.channel-grid { display:grid; grid-template-columns:repeat(3, minmax(0, 1fr)); gap:var(--spacing-3); }
+.channel-card { position:relative; display:block; border:1px solid var(--border); background:rgba(0,0,0,0.2); padding:var(--spacing-4); cursor:pointer; min-height:116px; transition:border-color .2s, background-color .2s, transform .2s; }
+.channel-card:hover { border-color:var(--primary); background:rgba(255,176,0,0.08); transform:translateY(-1px); }
+.channel-card input { position:absolute; inset:12px 12px auto auto; }
+.channel-card strong { display:block; color:var(--text); margin-bottom:6px; font-family:var(--heading); text-transform:uppercase; }
+.channel-card small { color:var(--text2); line-height:1.4; display:block; padding-right:18px; }
+.channel-card:has(input:checked) { border-color:var(--primary); background:rgba(255,176,0,0.12); box-shadow: inset 0 0 0 1px rgba(255,176,0,0.15); }
+.template-row { display:flex; gap:var(--spacing-2); flex-wrap:wrap; margin-bottom:var(--spacing-4); }
+.template-row button { padding:8px 10px; font-size:11px; }
+.kb-layout { display:grid; grid-template-columns:minmax(280px, 0.9fr) minmax(360px, 1.4fr); gap:var(--spacing-6); align-items:start; }
+.kb-list-panel, .kb-editor-panel { border:1px solid var(--border); background:var(--card); }
+.kb-list-head, .kb-editor-head { padding:var(--spacing-5); border-bottom:1px solid var(--border); display:flex; justify-content:space-between; gap:var(--spacing-4); align-items:center; }
+.kb-card-list { display:flex; flex-direction:column; }
+.kb-row { width:100%; text-align:left; border:0; border-bottom:1px solid var(--border); background:transparent; color:var(--text); box-shadow:none; padding:var(--spacing-4); justify-content:space-between; text-transform:none; letter-spacing:0; font-family:var(--sans); }
+.kb-row:hover { background:rgba(255,255,255,0.04); transform:none; box-shadow:none; }
+.kb-row.active { background:rgba(255,176,0,0.1); border-left:3px solid var(--primary); }
+.kb-row-title { display:block; font-weight:bold; color:var(--text); margin-bottom:4px; }
+.kb-row-meta { color:var(--text2); font-size:12px; display:block; }
+.entry-list { display:grid; gap:var(--spacing-3); margin-top:var(--spacing-4); }
+.entry-card { border:1px solid var(--border); background:rgba(0,0,0,0.18); padding:var(--spacing-4); }
+.entry-card p { margin-top:8px; white-space:pre-wrap; color:var(--text2); }
+.entry-meta { display:flex; flex-wrap:wrap; gap:var(--spacing-2); align-items:center; margin-top:6px; }
+.result-box { border:1px solid var(--border); background:rgba(0,0,0,0.22); padding:var(--spacing-4); margin-top:var(--spacing-4); }
+.result-meter { height:8px; background:rgba(255,255,255,0.08); overflow:hidden; margin:8px 0 12px; }
+.result-meter span { display:block; height:100%; background:var(--primary); width:0%; }
+.segmented { display:flex; gap:0; border:1px solid var(--border); width:max-content; }
+.segmented button { border-radius:0; box-shadow:none; border-right:1px solid var(--border); }
+.segmented button:last-child { border-right:none; }
+
+@media (max-width: 900px) {
+  .col-2, .col-3, .channel-grid, .kb-layout { grid-template-columns: 1fr; }
+  .page-hero { align-items:flex-start; flex-direction:column; }
+  .hero-actions { justify-content:flex-start; }
+}
+
+/* Live config chips */
+.chip { display: inline-flex; align-items: center; gap: var(--spacing-2); padding: var(--spacing-1) var(--spacing-3); background: var(--bg); border-radius: 12px; font-size: 12px; color: var(--text2); font-family: var(--heading); border: 1px solid var(--border); }
+.chip.configured { color: var(--primary); border-color: var(--primary); background: var(--secondary); }
+
+/* Logs Terminal */
+.terminal { background: var(--text); color: #00ff88; font-family: var(--mono); padding: var(--spacing-4); border-radius: var(--r); height: 400px; overflow-y: auto; font-size: 13px; border: 1px solid var(--border); box-shadow: inset 0 2px 4px rgba(0,0,0,0.1); }
+.log-line { margin-bottom: var(--spacing-2); border-bottom: 1px dashed #444; padding-bottom: var(--spacing-2); word-break: break-all; }
+.log-time { color: #888; margin-right: var(--spacing-3); }
+.log-error { color: var(--danger); }
+.log-warning { color: var(--warn); }
+@keyframes spin { 100% { transform: rotate(360deg); } }
+</style>
+</head>
+<body>
+
+<div class="app-layout">
+    <aside class="sidebar expanded" id="sidebar">
+        <div class="sidebar-header">
+            <div class="logo"><span class="tab-icon">⚡</span> <span class="logo-text"><span style="color: var(--primary);">J</span>ay Call AI</span></div>
+            <button class="hamburger" onclick="toggleSidebar()">☰</button>
+        </div>
+        <nav class="sidebar-nav">
+            <div class="nav-group">Observe</div>
+            <div class="tab active" onclick="switchTab('stats')" title="Stats"><span class="tab-icon"><svg viewBox="0 0 24 24" width="18" height="18" stroke="currentColor" stroke-width="1.5" fill="none" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 6 13.5 15.5 8.5 10.5 1 18"></polyline><polyline points="17 6 23 6 23 12"></polyline></svg></span><span class="tab-text">Stats</span></div>
+            <div class="tab" onclick="switchTab('logs')" title="Call Logs"><span class="tab-icon"><svg viewBox="0 0 24 24" width="18" height="18" stroke="currentColor" stroke-width="1.5" fill="none" stroke-linecap="round" stroke-linejoin="round"><line x1="8" y1="6" x2="21" y2="6"></line><line x1="8" y1="12" x2="21" y2="12"></line><line x1="8" y1="18" x2="21" y2="18"></line><line x1="3" y1="6" x2="3.01" y2="6"></line><line x1="3" y1="12" x2="3.01" y2="12"></line><line x1="3" y1="18" x2="3.01" y2="18"></line></svg></span><span class="tab-text">Call Logs</span></div>
+            <div class="tab" onclick="switchTab('syslogs')" title="System Logs"><span class="tab-icon"><svg viewBox="0 0 24 24" width="18" height="18" stroke="currentColor" stroke-width="1.5" fill="none" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 17 10 11 4 5"></polyline><line x1="12" y1="19" x2="20" y2="19"></line></svg></span><span class="tab-text">System Logs</span></div>
+
+            <div class="nav-group">Build</div>
+            <div class="tab" onclick="switchTab('prompt')" title="AI Prompt"><span class="tab-icon"><svg viewBox="0 0 24 24" width="18" height="18" stroke="currentColor" stroke-width="1.5" fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path></svg></span><span class="tab-text">AI Prompt</span></div>
+            <div class="tab" onclick="switchTab('agents')" title="Agents"><span class="tab-icon"><svg viewBox="0 0 24 24" width="18" height="18" stroke="currentColor" stroke-width="1.5" fill="none" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="10" rx="2"></rect><circle cx="12" cy="5" r="2"></circle><path d="M12 7v4"></path><line x1="8" y1="16" x2="8" y2="16"></line><line x1="16" y1="16" x2="16" y2="16"></line></svg></span><span class="tab-text">Agents</span></div>
+            <div class="tab" onclick="switchTab('knowledge')" title="Knowledge Base"><span class="tab-icon"><svg viewBox="0 0 24 24" width="18" height="18" stroke="currentColor" stroke-width="1.5" fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"></path><path d="M4 4.5A2.5 2.5 0 0 1 6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5z"></path></svg></span><span class="tab-text">Knowledge Base</span></div>
+
+            <div class="nav-group">Calling</div>
+            <div class="tab" onclick="switchTab('single')" title="Single Call"><span class="tab-icon"><svg viewBox="0 0 24 24" width="18" height="18" stroke="currentColor" stroke-width="1.5" fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z"></path></svg></span><span class="tab-text">Single Call</span></div>
+            <div class="tab" onclick="switchTab('batch')" title="Batch Call"><span class="tab-icon"><svg viewBox="0 0 24 24" width="18" height="18" stroke="currentColor" stroke-width="1.5" fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="M9 11l3 3L22 4"></path><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"></path></svg></span><span class="tab-text">Batch Call</span></div>
+            <div class="tab" onclick="switchTab('campaigns')" title="Campaigns"><span class="tab-icon"><svg viewBox="0 0 24 24" width="18" height="18" stroke="currentColor" stroke-width="1.5" fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="M4.5 16.5c-1.5 1.26-2 5-2 5s3.74-.5 5-2c.71-.84.7-2.13-.09-2.91a2.18 2.18 0 0 0-2.91-.09z"></path><path d="M12 15l-3-3a22 22 0 0 1 2-3.95A12.88 12.88 0 0 1 22 2c0 2.72-.78 7.5-6 11a22.35 22.35 0 0 1-4 2z"></path><path d="M9 12H4s.55-3.03 2-4c1.62-1.08 5 0 5 0"></path><path d="M12 15v5s3.03-.55 4-2c1.08-1.62 0-5 0-5"></path></svg></span><span class="tab-text">Campaigns</span></div>
+            <div class="tab" onclick="switchTab('appointments')" title="Appointments"><span class="tab-icon"><svg viewBox="0 0 24 24" width="18" height="18" stroke="currentColor" stroke-width="1.5" fill="none" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect><line x1="16" y1="2" x2="16" y2="6"></line><line x1="8" y1="2" x2="8" y2="6"></line><line x1="3" y1="10" x2="21" y2="10"></line></svg></span><span class="tab-text">Appointments</span></div>
+
+            <div class="nav-group">Manage</div>
+            <div class="tab" onclick="switchTab('crm')" title="CRM"><span class="tab-icon"><svg viewBox="0 0 24 24" width="18" height="18" stroke="currentColor" stroke-width="1.5" fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path><circle cx="9" cy="7" r="4"></circle><path d="M23 21v-2a4 4 0 0 0-3-3.87"></path><path d="M16 3.13a4 4 0 0 1 0 7.75"></path></svg></span><span class="tab-text">CRM</span></div>
+            <div class="tab" onclick="switchTab('settings')" title="Settings"><span class="tab-icon"><svg viewBox="0 0 24 24" width="18" height="18" stroke="currentColor" stroke-width="1.5" fill="none" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg></span><span class="tab-text">Settings</span></div>
+            <div class="tab" onclick="switchTab('setup')" title="Setup"><span class="tab-icon"><svg viewBox="0 0 24 24" width="18" height="18" stroke="currentColor" stroke-width="1.5" fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"></path></svg></span><span class="tab-text">Setup</span></div>
+        </nav>
+    </aside>
+    <div class="main-wrapper">
+        <main>
+    <!-- STATS -->
+    <div id="stats" class="panel active">
+        <div class="flex-between mb-2">
+            <h2>Platform Overview</h2>
+            <div id="live-config-chips" class="flex"></div>
+        </div>
+        
+        <div class="grid">
+            <div class="kpi">
+                <h3>Total Calls</h3>
+                <div class="val" id="kpi-total">0</div>
+            </div>
+            <div class="kpi">
+                <h3>Appointments Booked</h3>
+                <div class="val" id="kpi-booked">0</div>
+            </div>
+            <div class="kpi">
+                <h3>Not Interested</h3>
+                <div class="val" id="kpi-not-interested">0</div>
+            </div>
+            <div class="kpi">
+                <h3>Booking Rate</h3>
+                <div class="val" id="kpi-rate">0%</div>
+            </div>
+            <div class="kpi">
+                <h3>Avg Duration</h3>
+                <div class="val" id="kpi-duration">0s</div>
+            </div>
+        </div>
+
+        <div class="col-2">
+            <div class="card">
+                <h3 class="mb-2">Call Outcomes</h3>
+                <canvas id="chartOutcomes" height="250"></canvas>
+            </div>
+            <div class="card">
+                <h3 class="mb-2">14-Day Timeline</h3>
+                <canvas id="chartTimeline" height="250"></canvas>
+            </div>
+        </div>
+        <div class="card">
+            <h3 class="mb-2">Average Duration by Outcome</h3>
+            <canvas id="chartDuration" height="100"></canvas>
+        </div>
+    </div>
+
+    <!-- SINGLE CALL -->
+    <div id="single" class="panel">
+        <h2>Make a Single Call</h2>
+        <p class="text-muted mb-2">Dispatch the AI agent to call a specific number immediately.</p>
+        
+        <div class="card" style="max-width: 600px;">
+            <form id="call-form" onsubmit="event.preventDefault(); submitSingleCall();">
+                <div class="form-group">
+                    <label>Phone Number (E.164 format, e.g. +919876543210)</label>
+                    <input type="text" id="c-phone" required placeholder="+1234567890">
+                </div>
+                <div class="form-group">
+                    <label>Lead Name</label>
+                    <input type="text" id="c-name" value="there">
+                </div>
+                <div class="col-2">
+                    <div class="form-group">
+                        <label>Business Name</label>
+                        <input type="text" id="c-biz" value="our company">
+                    </div>
+                    <div class="form-group">
+                        <label>Service Type</label>
+                        <input type="text" id="c-service" value="our service">
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label>Agent Profile</label>
+                    <select id="c-profile"></select>
+                </div>
+                <div class="form-group">
+                    <label><input type="checkbox" id="c-custom-check" onchange="$('c-prompt-wrap').classList.toggle('hidden', !this.checked)"> Override System Prompt for this call only</label>
+                </div>
+                <div class="form-group hidden" id="c-prompt-wrap">
+                    <textarea id="c-prompt" placeholder="Custom prompt..."></textarea>
+                </div>
+                <button type="submit" id="c-btn">📞 Dispatch Call Now</button>
+            </form>
+        </div>
+    </div>
+
+    <!-- BATCH CALL -->
+    <div id="batch" class="panel">
+        <h2>Batch Calling (CSV)</h2>
+        <p class="text-muted mb-2">Upload a CSV to dispatch calls sequentially from your browser.</p>
+        
+        <div class="col-2">
+            <div class="card">
+                <h3 class="mb-2">Setup Batch</h3>
+                <div class="form-group">
+                    <label>Agent Profile</label>
+                    <select id="bc-profile"></select>
+                </div>
+                <div class="form-group">
+                    <label>Delay between calls (seconds)</label>
+                    <input type="number" id="bc-delay" value="5" min="1">
+                </div>
+                <div class="form-group">
+                    <label>Upload CSV</label>
+                    <input type="file" id="bc-file" accept=".csv" class="mb-1">
+                    <p class="text-muted" style="font-size:12px">Required headers: phone. Optional: lead_name, business_name, service_type.</p>
+                </div>
+                <button type="button" class="secondary w-100" onclick="parseBatchCSV()">📄 Parse CSV</button>
+            </div>
+            
+            <div class="card">
+                <h3 class="mb-2">Execution</h3>
+                <div class="flex-between mb-1">
+                    <span>Total Contacts: <strong id="bc-total">0</strong></span>
+                    <span>Dispatched: <strong id="bc-done" class="text-accent">0</strong></span>
+                </div>
+                <div class="progress-bar mb-2">
+                    <div class="progress-fill" id="bc-progress"></div>
+                </div>
+                <button type="button" id="bc-start-btn" onclick="startBatchCall()" disabled>🚀 Start Batch Calling</button>
+                <button type="button" id="bc-stop-btn" class="danger hidden" onclick="stopBatchCall()">🛑 Stop</button>
+            </div>
+        </div>
+
+        <div class="card hidden" id="bc-preview-wrap">
+            <h3 class="mb-2">CSV Preview</h3>
+            <div class="table-wrap">
+                <table id="bc-table">
+                    <thead><tr><th>Phone</th><th>Name</th><th>Business</th><th>Service</th><th>Status</th></tr></thead>
+                    <tbody></tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <!-- CAMPAIGNS -->
+    <div id="campaigns" class="panel">
+        <div class="flex-between mb-2">
+            <div>
+                <h2>Campaigns</h2>
+                <p class="text-muted">Server-side scheduled mass calling via APScheduler.</p>
+            </div>
+            <button onclick="toggleCampaignForm()">+ New Campaign</button>
+        </div>
+
+        <div class="card hidden" id="camp-form-wrap">
+            <h3 class="mb-2">Create New Campaign</h3>
+            <form onsubmit="event.preventDefault(); createCampaign();">
+                <div class="col-2">
+                    <div class="form-group">
+                        <label>Campaign Name</label>
+                        <input type="text" id="camp-name" required>
+                    </div>
+                    <div class="form-group">
+                        <label>Agent Profile</label>
+                        <select id="camp-profile"></select>
+                    </div>
+                </div>
+                <div class="col-3">
+                    <div class="form-group">
+                        <label>Schedule Type</label>
+                        <select id="camp-schedule">
+                            <option value="once">Run Once Now</option>
+                            <option value="daily">Daily</option>
+                            <option value="weekdays">Weekdays (Mon-Fri)</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label>Schedule Time (24h)</label>
+                        <input type="time" id="camp-time" value="09:00">
+                    </div>
+                    <div class="form-group">
+                        <label>Call Delay (seconds)</label>
+                        <input type="number" id="camp-delay" value="3" min="1">
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label>Contacts CSV</label>
+                    <input type="file" id="camp-file" accept=".csv" required>
+                </div>
+                <button type="submit" id="camp-submit-btn">Save Campaign</button>
+                <button type="button" class="secondary" onclick="toggleCampaignForm()">Cancel</button>
+            </form>
+        </div>
+
+        <div class="table-wrap">
+            <table>
+                <thead><tr><th>Name</th><th>Status</th><th>Schedule</th><th>Stats</th><th>Created</th><th>Actions</th></tr></thead>
+                <tbody id="camp-list"></tbody>
+            </table>
+        </div>
+    </div>
+
+    <!-- AGENTS -->
+    <div id="agents" class="panel">
+        <div class="page-hero">
+            <div>
+                <h2>Agent Builder</h2>
+                <p class="text-muted">Configure each AI agent once, then deploy it across voice calls, text channels, or both.</p>
+            </div>
+            <div class="hero-actions">
+                <button class="secondary" onclick="switchTabByName('knowledge')">Manage Knowledge</button>
+                <button onclick="resetAgentForm(); $('agent-form-wrap').classList.remove('hidden')">+ New Agent</button>
+            </div>
+        </div>
+
+        <div class="card hidden" id="agent-form-wrap">
+            <div class="builder-heading">
+                <div>
+                    <h3 id="agent-form-title">Create Agent Profile</h3>
+                    <p class="text-muted">Set channel behavior, business knowledge, tools, and the test path in one place.</p>
+                </div>
+                <span class="badge info" id="agent-form-mode-badge">Draft</span>
+            </div>
+            <form onsubmit="event.preventDefault(); saveAgentProfile();">
+                <input type="hidden" id="ag-id">
+                <div class="builder-section">
+                    <div class="builder-heading">
+                        <h3>Identity</h3>
+                        <span class="chip">Agent Core</span>
+                    </div>
+                    <div class="col-2">
+                        <div class="form-group">
+                            <label>Profile Name</label>
+                            <input type="text" id="ag-name" placeholder="Appointment Setter, Support Agent, Sales Qualifier" required>
+                        </div>
+                        <div class="form-group">
+                            <label>Model</label>
+                            <select id="ag-model">
+                                <option value="gemini-3.1-flash-live-preview">Gemini 3.1 Flash Live (Recommended)</option>
+                                <option value="gemini-2.5-flash-native-audio-preview-12-2025">Gemini 2.5 Flash Native Audio</option>
+                            </select>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="builder-section">
+                    <div class="builder-heading">
+                        <h3>Channels</h3>
+                        <span class="chip">Voice / Text</span>
+                    </div>
+                    <input type="hidden" id="ag-channel-mode" value="voice">
+                    <div class="channel-grid">
+                        <label class="channel-card">
+                            <input type="radio" name="ag-channel-choice" value="voice" checked onchange="setAgentChannelMode(this.value)">
+                            <strong>Voice Only</strong>
+                            <small>Live calls, concise responses, interruption-friendly appointment flows.</small>
+                        </label>
+                        <label class="channel-card">
+                            <input type="radio" name="ag-channel-choice" value="text" onchange="setAgentChannelMode(this.value)">
+                            <strong>Text Only</strong>
+                            <small>Web chat, WhatsApp-style support, SMS-style replies, and richer formatting.</small>
+                        </label>
+                        <label class="channel-card">
+                            <input type="radio" name="ag-channel-choice" value="both" onchange="setAgentChannelMode(this.value)">
+                            <strong>Voice + Text</strong>
+                            <small>Shared knowledge and tools with channel-specific response style.</small>
+                        </label>
+                    </div>
+                    <div class="form-group">
+                        <label>Knowledge Confidence Threshold</label>
+                        <input type="number" id="ag-confidence" min="0" max="1" step="0.05" value="0.55">
+                        <small class="text-muted">Below this score, the agent falls back instead of guessing.</small>
+                    </div>
+                </div>
+
+                <div class="builder-section">
+                    <div class="builder-heading">
+                        <h3>Voice</h3>
+                        <span class="chip">Calls</span>
+                    </div>
+                    <div class="form-group">
+                        <label>Voice</label>
+                        <select id="ag-voice">
+                        <optgroup label="Female voices">
+                          <option value="Aoede" selected>Aoede — warm, expressive ⭐</option>
+                          <option value="Achernar">Achernar — soft & clear</option>
+                          <option value="Autonoe">Autonoe — natural female</option>
+                          <option value="Callirrhoe">Callirrhoe — gentle female</option>
+                          <option value="Despina">Despina — bright female</option>
+                          <option value="Erinome">Erinome — smooth female</option>
+                          <option value="Gacrux">Gacrux — rich female</option>
+                          <option value="Kore">Kore — soft, calm</option>
+                          <option value="Laomedeia">Laomedeia — light female</option>
+                          <option value="Leda">Leda — clear female</option>
+                          <option value="Pulcherrima">Pulcherrima — warm female</option>
+                          <option value="Sulafat">Sulafat — smooth female</option>
+                          <option value="Vindemiatrix">Vindemiatrix — professional female</option>
+                          <option value="Zephyr">Zephyr — airy female</option>
+                        </optgroup>
+                        <optgroup label="Male voices">
+                          <option value="Achird">Achird — clear male</option>
+                          <option value="Algenib">Algenib — strong male</option>
+                          <option value="Algieba">Algieba — rich male</option>
+                          <option value="Alnilam">Alnilam — deep male</option>
+                          <option value="Charon">Charon — calm, deep</option>
+                          <option value="Enceladus">Enceladus — expressive male</option>
+                          <option value="Fenrir">Fenrir — confident male</option>
+                          <option value="Iapetus">Iapetus — steady male</option>
+                          <option value="Orus">Orus — warm male</option>
+                          <option value="Perseus">Perseus — clear male</option>
+                          <option value="Puck">Puck — bright, energetic</option>
+                          <option value="Rasalgethi">Rasalgethi — bold male</option>
+                          <option value="Sadachbia">Sadachbia — natural male</option>
+                          <option value="Sadaltager">Sadaltager — smooth male</option>
+                          <option value="Schedar">Schedar — professional male</option>
+                          <option value="Umbriel">Umbriel — deep, calm</option>
+                          <option value="Zubenelgenubi">Zubenelgenubi — resonant male</option>
+                        </optgroup>
+                        </select>
+                    </div>
+                </div>
+
+                <div class="builder-section">
+                    <div class="builder-heading">
+                        <h3>Instructions</h3>
+                        <span class="chip">Prompt Logic</span>
+                    </div>
+                    <div class="form-group">
+                        <label>System Prompt</label>
+                        <textarea id="ag-prompt" style="height: 200px" placeholder="Leave empty to use Global Prompt"></textarea>
+                    </div>
+                    <div class="col-2">
+                    <div class="form-group">
+                        <label>Voice Prompt Override</label>
+                        <textarea id="ag-voice-prompt" rows="4" placeholder="Optional extra rules for calls, e.g. keep every answer under 12 words."></textarea>
+                    </div>
+                    <div class="form-group">
+                        <label>Text Prompt Override</label>
+                        <textarea id="ag-text-prompt" rows="4" placeholder="Optional extra rules for chat, SMS, WhatsApp, or web chat."></textarea>
+                    </div>
+                    </div>
+                </div>
+
+                <div class="builder-section">
+                    <div class="builder-heading">
+                        <h3>Knowledge</h3>
+                        <button type="button" class="ghost" onclick="switchTabByName('knowledge')">Open Knowledge Base</button>
+                    </div>
+                    <div class="form-group">
+                        <label>Attached Knowledge Bases</label>
+                        <div id="ag-kb-list" class="checkbox-grid"></div>
+                        <small class="text-muted">One agent can use multiple knowledge bases. The same knowledge base can power many agents.</small>
+                    </div>
+                </div>
+
+                <div class="builder-section">
+                    <div class="builder-heading">
+                        <h3>Tools & Call Start</h3>
+                        <span class="chip">Workflow</span>
+                    </div>
+                    <div class="form-group">
+                        <label>Enabled Tools (JSON Array)</label>
+                        <input type="text" id="ag-tools" value='["check_availability", "book_appointment", "end_call", "lookup_contact", "remember_details", "search_knowledge"]'>
+                    </div>
+                    <div class="form-group">
+                        <label>Who Speaks First?</label>
+                        <select id="ag-initiation" onchange="$('ag-first-msg-wrap').classList.toggle('hidden', this.value !== 'agent')">
+                            <option value="agent">Agent Speaks First</option>
+                            <option value="user">User Speaks First</option>
+                        </select>
+                    </div>
+                    <div class="form-group" id="ag-first-msg-wrap">
+                        <label>Agent's First Message</label>
+                        <textarea id="ag-first-message" rows="3" placeholder="e.g. Hi! This is Alex from SolarTech. Am I speaking with {lead_name}?"></textarea>
+                        <small class="text-muted">Use <code>{lead_name}</code>, <code>{business_name}</code>, <code>{service_type}</code> as placeholders.</small>
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label><input type="checkbox" id="ag-default"> Set as Default Profile</label>
+                </div>
+                <button type="submit">Save Profile</button>
+                <button type="button" class="secondary" onclick="$('agent-form-wrap').classList.add('hidden')">Cancel</button>
+            </form>
+            <div class="builder-section">
+                <div class="builder-heading">
+                    <div>
+                        <h3>Test Agent Behavior</h3>
+                        <p class="text-muted">Compare voice and text answers before using the agent in production.</p>
+                    </div>
+                    <span class="chip configured">Source Tracing</span>
+                </div>
+                <div class="col-2">
+                    <div class="form-group">
+                        <label>Test Channel</label>
+                        <select id="ag-test-channel">
+                            <option value="voice">Voice</option>
+                            <option value="text">Text</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label>Customer Message</label>
+                        <input type="text" id="ag-test-message" placeholder="What are your prices?">
+                    </div>
+                </div>
+                <button type="button" class="secondary" onclick="testAgentProfile()">Run Test</button>
+                <div id="ag-test-result" class="result-box hidden"></div>
+            </div>
+        </div>
+
+        <div class="table-wrap">
+            <table>
+                <thead><tr><th>Name</th><th>Channel</th><th>Voice</th><th>Model</th><th>Tools</th><th>Default</th><th>Actions</th></tr></thead>
+                <tbody id="agent-list"></tbody>
+            </table>
+        </div>
+    </div>
+
+    <!-- KNOWLEDGE BASE -->
+    <div id="knowledge" class="panel">
+        <div class="page-hero">
+            <div>
+                <h2>Knowledge Base</h2>
+                <p class="text-muted">Build the business truth layer your agents use before generating voice or text replies.</p>
+            </div>
+            <div class="hero-actions">
+                <button class="secondary" onclick="switchTabByName('agents')">Map To Agents</button>
+                <button onclick="$('kb-form-wrap').classList.toggle('hidden')">+ New Knowledge Base</button>
+            </div>
+        </div>
+
+        <div class="stat-strip">
+            <div class="mini-stat"><strong id="kb-stat-bases">0</strong><span>Knowledge Bases</span></div>
+            <div class="mini-stat"><strong id="kb-stat-active">0</strong><span>Active Sources</span></div>
+            <div class="mini-stat"><strong id="kb-stat-selected">None</strong><span>Selected Base</span></div>
+        </div>
+
+        <div class="card hidden" id="kb-form-wrap">
+            <div class="builder-heading">
+                <h3>Create Knowledge Base</h3>
+                <span class="chip">Reusable</span>
+            </div>
+            <form onsubmit="event.preventDefault(); saveKnowledgeBase();">
+                <div class="col-2">
+                    <div class="form-group">
+                        <label>Name</label>
+                        <input type="text" id="kb-name" placeholder="Company Support Knowledge" required>
+                    </div>
+                    <div class="form-group">
+                        <label>Description</label>
+                        <input type="text" id="kb-description" placeholder="Core facts for sales and support agents">
+                    </div>
+                </div>
+                <button type="submit">Save Knowledge Base</button>
+            </form>
+        </div>
+
+        <div class="kb-layout">
+            <div class="kb-list-panel">
+                <div class="kb-list-head">
+                    <div>
+                        <h3>Libraries</h3>
+                        <p class="text-muted">Reusable by any agent.</p>
+                    </div>
+                    <span class="badge active">KB</span>
+                </div>
+                <div id="kb-list" class="kb-card-list"></div>
+            </div>
+            <div class="kb-editor-panel">
+                <div class="kb-editor-head">
+                    <div>
+                        <h3 id="kb-detail-title">Select a knowledge base</h3>
+                        <p class="text-muted" id="kb-detail-description">Add structured content after selecting a knowledge base.</p>
+                    </div>
+                    <span class="chip" id="kb-detail-chip">No source selected</span>
+                </div>
+                <form id="kb-entry-form" class="hidden" onsubmit="event.preventDefault(); saveKnowledgeEntry();">
+                    <input type="hidden" id="kb-active-id">
+                    <div style="padding: var(--spacing-5); border-bottom:1px solid var(--border);">
+                    <div class="template-row">
+                        <button type="button" class="ghost" onclick="applyKnowledgeTemplate('faq')">FAQ</button>
+                        <button type="button" class="ghost" onclick="applyKnowledgeTemplate('pricing')">Pricing</button>
+                        <button type="button" class="ghost" onclick="applyKnowledgeTemplate('objection')">Objection</button>
+                        <button type="button" class="ghost" onclick="applyKnowledgeTemplate('appointment_rule')">Appointment Rule</button>
+                    </div>
+                    <div class="form-group">
+                        <label>Entry Title</label>
+                        <input type="text" id="ke-title" required>
+                    </div>
+                    <div class="col-2">
+                        <div class="form-group">
+                            <label>Type</label>
+                            <select id="ke-type">
+                                <option value="faq">FAQ</option>
+                                <option value="business_info">Business Info</option>
+                                <option value="service">Service</option>
+                                <option value="pricing">Pricing</option>
+                                <option value="policy">Policy</option>
+                                <option value="script">Script</option>
+                                <option value="objection">Objection Handling</option>
+                                <option value="appointment_rule">Appointment Rule</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label>Category</label>
+                            <input type="text" id="ke-category" placeholder="Billing, Scheduling, Product">
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label>Tags</label>
+                        <input type="text" id="ke-tags" placeholder="pricing, refund, appointment">
+                    </div>
+                    <div class="form-group">
+                        <label>Content</label>
+                        <textarea id="ke-content" style="height:160px" required></textarea>
+                    </div>
+                    <button type="submit">Add Entry</button>
+                    <small class="text-muted">Content is split into searchable chunks when saved. Document upload can plug into this same pipeline later.</small>
+                    </div>
+                </form>
+                <div id="kb-entry-list" class="entry-list" style="padding: var(--spacing-5);"></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- AI PROMPT -->
+    <div id="prompt" class="panel">
+        <div class="flex-between mb-2">
+            <h2>Global AI Prompt</h2>
+            <div id="prompt-status" class="badge"></div>
+        </div>
+        <p class="text-muted mb-2">This is the default instruction set for the AI if no agent profile overrides it. Supports `{lead_name}`, `{business_name}`, and `{service_type}` interpolation.</p>
+        
+        <div class="card">
+            <form onsubmit="event.preventDefault(); savePrompt();">
+                <textarea id="global-prompt" style="height: 500px; font-family: var(--mono); font-size: 13px; line-height: 1.6;"></textarea>
+                <div class="flex-between mt-2">
+                    <span class="text-muted" id="prompt-len">0 chars</span>
+                    <div class="flex">
+                        <button type="button" class="secondary" onclick="resetPrompt()">Reset to Default</button>
+                        <button type="submit">💾 Save Prompt</button>
+                    </div>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- APPOINTMENTS -->
+    <div id="appointments" class="panel">
+        <div class="flex-between mb-2">
+            <h2>Appointments</h2>
+            <input type="date" id="apt-date" onchange="loadAppointments()" style="width: 200px;">
+        </div>
+        
+        <div class="table-wrap">
+            <table>
+                <thead><tr><th>Date</th><th>Time</th><th>Name</th><th>Phone</th><th>Service</th><th>Status</th><th>Actions</th></tr></thead>
+                <tbody id="apt-list"></tbody>
+            </table>
+        </div>
+    </div>
+
+    <!-- CALL LOGS -->
+    <div id="logs" class="panel">
+        <h2>Call Logs</h2>
+        <p class="text-muted mb-2">Complete history of all outgoing calls.</p>
+        
+        <div class="table-wrap mb-2">
+            <table>
+                <thead><tr><th>Timestamp</th><th>Phone</th><th>Lead</th><th>Outcome</th><th>Duration</th><th>Recording</th><th>Notes / Reason</th></tr></thead>
+                <tbody id="logs-list"></tbody>
+            </table>
+        </div>
+        <div class="flex-between">
+            <button class="secondary" onclick="changeLogPage(-1)">← Previous</button>
+            <span id="log-page-indicator">Page 1</span>
+            <button class="secondary" onclick="changeLogPage(1)">Next →</button>
+        </div>
+    </div>
+
+    <!-- CRM -->
+    <div id="crm" class="panel">
+        <h2>CRM Contacts</h2>
+        <p class="text-muted mb-2">Unique leads and their history.</p>
+        
+        <div class="col-2">
+            <div class="table-wrap">
+                <table>
+                    <thead><tr><th>Phone</th><th>Name</th><th>Calls</th><th>Booked</th><th>Last Call</th></tr></thead>
+                    <tbody id="crm-list"></tbody>
+                </table>
+            </div>
+            
+            <div class="card" id="crm-detail" style="display:none">
+                <h3 class="mb-2" id="crm-d-phone"></h3>
+                <div id="crm-d-memories" class="mb-2 text-muted"></div>
+                <h4>Call History</h4>
+                <div id="crm-d-calls" class="mt-1" style="max-height:400px; overflow-y:auto"></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- SETTINGS -->
+    <div id="settings" class="panel">
+        <h2>Configuration</h2>
+        <p class="text-muted mb-2">Environment variables and service credentials.</p>
+        
+        <div class="grid">
+            <div class="card">
+                <h3>LiveKit</h3>
+                <form class="mt-1" onsubmit="event.preventDefault(); saveGroup('livekit')">
+                    <div class="form-group">
+                        <label>URL (wss://...)</label>
+                        <input type="text" id="set-LIVEKIT_URL">
+                    </div>
+                    <div class="form-group">
+                        <label>API Key</label>
+                        <input type="password" id="set-LIVEKIT_API_KEY">
+                    </div>
+                    <div class="form-group">
+                        <label>API Secret</label>
+                        <input type="password" id="set-LIVEKIT_API_SECRET">
+                    </div>
+                    <button type="submit" class="w-100">Save LiveKit</button>
+                </form>
+            </div>
+            
+            <div class="card">
+                <h3>Google Gemini</h3>
+                <form class="mt-1" onsubmit="event.preventDefault(); saveGroup('gemini')">
+                    <div class="form-group">
+                        <label>API Key</label>
+                        <input type="password" id="set-GOOGLE_API_KEY">
+                    </div>
+                    <div class="form-group">
+                        <label>Model</label>
+                        <input type="text" id="set-GEMINI_MODEL" placeholder="gemini-3.1-flash-live-preview">
+                    </div>
+                    <div class="form-group">
+                        <label>Voice</label>
+                        <input type="text" id="set-GEMINI_TTS_VOICE" placeholder="Aoede">
+                    </div>
+                    <button type="submit" class="w-100">Save Gemini</button>
+                </form>
+            </div>
+            
+            <div class="card">
+                <h3>Vobiz SIP Telephony</h3>
+                <form class="mt-1" onsubmit="event.preventDefault(); saveGroup('vobiz')">
+                    <div class="form-group">
+                        <label>SIP Domain</label>
+                        <input type="text" id="set-VOBIZ_SIP_DOMAIN">
+                    </div>
+                    <div class="form-group">
+                        <label>Username</label>
+                        <input type="text" id="set-VOBIZ_USERNAME">
+                    </div>
+                    <div class="form-group">
+                        <label>Password</label>
+                        <input type="password" id="set-VOBIZ_PASSWORD">
+                    </div>
+                    <div class="form-group">
+                        <label>Outbound Number</label>
+                        <input type="text" id="set-VOBIZ_OUTBOUND_NUMBER">
+                    </div>
+                    <div class="form-group">
+                        <label>Trunk ID (Generated)</label>
+                        <input type="text" id="set-OUTBOUND_TRUNK_ID" readonly style="background:#222">
+                    </div>
+                    <div class="flex">
+                        <button type="submit" style="flex:1">Save Vobiz</button>
+                        <button type="button" class="secondary" onclick="createSIPTrunk()" title="Create in LiveKit">⚡ Trunk</button>
+                    </div>
+                </form>
+            </div>
+            
+            <div class="card">
+                <h3>Twilio SMS</h3>
+                <form class="mt-1" onsubmit="event.preventDefault(); saveGroup('twilio')">
+                    <div class="form-group">
+                        <label>Account SID</label>
+                        <input type="text" id="set-TWILIO_ACCOUNT_SID">
+                    </div>
+                    <div class="form-group">
+                        <label>Auth Token</label>
+                        <input type="password" id="set-TWILIO_AUTH_TOKEN">
+                    </div>
+                    <div class="form-group">
+                        <label>From Number</label>
+                        <input type="text" id="set-TWILIO_FROM_NUMBER">
+                    </div>
+                    <button type="submit" class="w-100">Save Twilio</button>
+                </form>
+            </div>
+            
+            <div class="card">
+                <h3>Cal.com Sync</h3>
+                <form class="mt-1" onsubmit="event.preventDefault(); saveGroup('calcom')">
+                    <div class="form-group">
+                        <label>API Key</label>
+                        <input type="password" id="set-CALCOM_API_KEY">
+                    </div>
+                    <div class="form-group">
+                        <label>Event Type ID</label>
+                        <input type="text" id="set-CALCOM_EVENT_TYPE_ID">
+                    </div>
+                    <div class="form-group">
+                        <label>Timezone</label>
+                        <input type="text" id="set-CALCOM_TIMEZONE" placeholder="Asia/Kolkata">
+                    </div>
+                    <button type="submit" class="w-100">Save Cal.com</button>
+                </form>
+            </div>
+            
+            <div class="card">
+                <h3>Global Tool Toggles</h3>
+                <form class="mt-1" onsubmit="event.preventDefault(); saveToolToggles()">
+                    <div class="form-group">
+                        <label>Active Tools JSON Array</label>
+                        <textarea id="set-ENABLED_TOOLS" rows="6"></textarea>
+                    </div>
+                    <button type="submit" class="w-100">Save Tools</button>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <!-- SYSTEM LOGS -->
+    <div id="syslogs" class="panel">
+        <div class="flex-between mb-2">
+            <h2>System Logs</h2>
+            <div class="flex">
+                <select id="log-level" onchange="loadSysLogs()">
+                    <option value="">All Levels</option>
+                    <option value="error">Error</option>
+                    <option value="warning">Warning</option>
+                    <option value="info">Info</option>
+                </select>
+                <button class="secondary" onclick="loadSysLogs()">🔄 Refresh</button>
+                <button class="danger" onclick="apiDel('/api/logs').then(()=>loadSysLogs())">🗑️ Clear</button>
+            </div>
+        </div>
+        <div class="terminal" id="terminal-out"></div>
+    </div>
+
+    <!-- SETUP -->
+    <div id="setup" class="panel">
+        <h2>Setup Guide</h2>
+        <div class="card mt-2">
+            <h3>1. Initial Configuration</h3>
+            <p class="mt-1">Go to <b>Settings</b> and configure LiveKit, Google Gemini, and Vobiz SIP credentials.</p>
+            <p>Once saved, click the <b>⚡ Trunk</b> button under Vobiz to create the SIP trunk in your LiveKit project.</p>
+            
+            <h3 class="mt-2">2. Global AI Prompt</h3>
+            <p class="mt-1">Go to <b>AI Prompt</b> and customise the instructions. The AI uses this unless overridden by an Agent Profile.</p>
+            
+            <h3 class="mt-2">3. Agent Profiles</h3>
+            <p class="mt-1">Go to <b>Agents</b> and create personas with different voices and models.</p>
+            
+            <h3 class="mt-2">4. Test Call</h3>
+            <p class="mt-1">Go to <b>Single Call</b>, enter your phone number in E.164 format, and dispatch a call to test.</p>
+        </div>
+    </div>
+</main>
+</div> <!-- end .main-wrapper -->
+</div> <!-- end .app-layout -->
+
+<div class="toast" id="toast"></div>
+
+<script>
+// Core utilities
+const $ = id => document.getElementById(id);
+const fmtDate = iso => new Date(iso).toLocaleString();
+const emptyRow = (cols, msg) => `<tr><td colspan="${cols}" class="text-center text-muted" style="padding: 40px;"><div style="font-size: 24px; margin-bottom: 10px; opacity: 0.5;">📭</div>${msg}</td></tr>`;
+let currentTab = 'stats';
+let logsPage = 1;
+let chartInstances = {};
+let batchContacts = [];
+let batchRunning = false;
+let knowledgeBasesCache = [];
+let activeKnowledgeBaseId = '';
+
+function toggleSidebar() {
+    const sidebar = $('sidebar');
+    sidebar.classList.toggle('expanded');
+    sidebar.classList.toggle('collapsed');
+}
+
+const api = async (path, opts) => {
+    const r = await fetch(path, opts);
+    if (!r.ok) {
+        let msg = r.statusText;
+        try { msg = (await r.json()).detail || msg; } catch(e){}
+        throw new Error(msg);
+    }
+    return r.json();
+};
+const apiPost = (path, body) => api(path, {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body)});
+const apiPut = (path, body) => api(path, {method:'PUT', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body)});
+const apiPatch = (path, body) => api(path, {method:'PATCH', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body)});
+const apiDel  = path => api(path, {method:'DELETE'});
+const esc = s => String(s ?? '').replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[m]));
+
+function toast(msg, type='ok') {
+    const t = $('toast');
+    t.textContent = msg;
+    t.className = `toast show ${type}`;
+    setTimeout(() => t.className = 'toast', 3000);
+}
+
+function switchTab(name) {
+    document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+    document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
+    event.currentTarget.classList.add('active');
+    $(name).classList.add('active');
+    currentTab = name;
+    
+    if (name === 'stats') loadStats();
+    if (name === 'campaigns') loadCampaigns();
+    if (name === 'agents') { loadKnowledgeBases(false); loadAgentProfiles(); }
+    if (name === 'knowledge') loadKnowledgeBases(true);
+    if (name === 'prompt') loadPrompt();
+    if (name === 'appointments') loadAppointments();
+    if (name === 'logs') loadCalls();
+    if (name === 'crm') loadCRM();
+    if (name === 'settings') loadSettings();
+    if (name === 'syslogs') loadSysLogs();
+}
+
+function switchTabByName(name) {
+    const tab = document.querySelector(`.tab[onclick*="'${name}'"]`);
+    if (tab) {
+        document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+        tab.classList.add('active');
+    }
+    document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
+    $(name).classList.add('active');
+    currentTab = name;
+    if (name === 'stats') loadStats();
+    if (name === 'campaigns') loadCampaigns();
+    if (name === 'agents') { loadKnowledgeBases(false); loadAgentProfiles(); }
+    if (name === 'knowledge') loadKnowledgeBases(true);
+    if (name === 'prompt') loadPrompt();
+    if (name === 'appointments') loadAppointments();
+    if (name === 'logs') loadCalls();
+    if (name === 'crm') loadCRM();
+    if (name === 'settings') loadSettings();
+    if (name === 'syslogs') loadSysLogs();
+}
+
+function setAgentChannelMode(value) {
+    $('ag-channel-mode').value = value;
+    $('agent-form-mode-badge').textContent = value === 'both' ? 'Voice + Text' : value === 'text' ? 'Text Only' : 'Voice Only';
+    $('ag-test-channel').value = value === 'text' ? 'text' : 'voice';
+}
+
+function getOutcomeBadge(outcome) {
+    if (!outcome) return '<span class="badge">Unknown</span>';
+    const map = {
+        'booked': 'booked', 'active': 'active', 'completed': 'completed',
+        'not_interested': 'not_interested', 'failed': 'failed', 'wrong_number': 'wrong_number', 'cancelled': 'cancelled',
+        'voicemail': 'voicemail', 'no_answer': 'no_answer',
+        'callback_requested': 'info'
+    };
+    return `<span class="badge ${map[outcome] || 'default'}">${outcome.replace('_', ' ')}</span>`;
+}
+
+function getChannelBadge(channel) {
+    const label = channel === 'both' ? 'Voice + Text' : channel === 'text' ? 'Text Only' : 'Voice Only';
+    return `<span class="badge ${channel === 'text' ? 'info' : channel === 'both' ? 'active' : 'default'}">${label}</span>`;
+}
+
+// Stats + Charts
+async function loadStats() {
+    try {
+        const d = await api('/api/stats');
+        $('kpi-total').textContent = d.total_calls;
+        $('kpi-booked').textContent = d.booked;
+        $('kpi-not-interested').textContent = d.not_interested;
+        $('kpi-rate').textContent = d.booking_rate_percent + '%';
+        $('kpi-duration').textContent = d.avg_duration_seconds + 's';
+        
+        loadLiveConfig();
+        _renderCharts(d);
+    } catch(e) { console.error('Stats error:', e); }
+}
+
+async function loadLiveConfig() {
+    try {
+        const s = await api('/api/settings');
+        const p = await api('/api/prompt');
+        let html = '';
+        const add = (label, status, ok) => {
+            html += `<span class="chip ${ok?'configured':''}">${label}: ${status}</span>`;
+        };
+        add('LiveKit', s.LIVEKIT_API_KEY?.configured ? 'OK' : 'Missing', s.LIVEKIT_API_KEY?.configured);
+        add('Gemini', s.GOOGLE_API_KEY?.configured ? 'OK' : 'Missing', s.GOOGLE_API_KEY?.configured);
+        add('Trunk', s.OUTBOUND_TRUNK_ID?.configured ? 'OK' : 'Missing', s.OUTBOUND_TRUNK_ID?.configured);
+        add('Prompt', p.is_custom ? 'Custom' : 'Default', true);
+        $('live-config-chips').innerHTML = html;
+    } catch(e) {}
+}
+
+function _renderCharts(d) {
+    const mk = (id, type, data, options) => {
+        if(chartInstances[id]) chartInstances[id].destroy();
+        const ctx = $(id).getContext('2d');
+        chartInstances[id] = new Chart(ctx, {type, data, options});
+    };
+    
+    // Outcomes Donut
+    const ol = Object.keys(d.outcomes);
+    const od = Object.values(d.outcomes);
+    const colors = ol.map(o => o==='booked'?'#FFB000':o==='not_interested'?'#ff4444':'#ffaa00');
+    mk('chartOutcomes', 'doughnut', {
+        labels: ol, datasets: [{data: od, backgroundColor: colors, borderWidth:0}]
+    }, { responsive:true, maintainAspectRatio:false, plugins:{legend:{position:'right', labels:{color:'#E8DCC4', font: {family: 'Share Tech Mono'}}}} });
+    
+    // Timeline
+    const tl = d.timeline.map(t=>t.date.substring(5));
+    const td = d.timeline.map(t=>t.count);
+    mk('chartTimeline', 'line', {
+        labels: tl, datasets: [{label:'Calls', data:td, borderColor:'#FFB000', tension:0.4, fill:true, backgroundColor:'rgba(255,176,0,0.1)'}]
+    }, { responsive:true, maintainAspectRatio:false, scales:{y:{beginAtZero:true, grid:{color:'#2E4057'}, ticks:{color:'#8a9bb1', font: {family: 'Share Tech Mono'}}}, x:{grid:{color:'#2E4057'}, ticks:{color:'#8a9bb1', font: {family: 'Share Tech Mono'}}}}, plugins:{legend:{display:false}} });
+    
+    // Duration Bar
+    const dl = Object.keys(d.duration_by_outcome);
+    const dd = Object.values(d.duration_by_outcome);
+    mk('chartDuration', 'bar', {
+        labels: dl, datasets: [{data:dd, backgroundColor:'#FFB000'}]
+    }, { responsive:true, maintainAspectRatio:false, plugins:{legend:{display:false}}, scales:{y:{grid:{color:'#2E4057'}, ticks:{color:'#8a9bb1', font: {family: 'Share Tech Mono'}}}, x:{grid:{display:false}, ticks:{color:'#8a9bb1', font: {family: 'Share Tech Mono'}}}} });
+}
+
+// Single Call
+async function submitSingleCall() {
+    const btn = $('c-btn');
+    const originalText = btn.innerHTML;
+    btn.disabled = true;
+    btn.innerHTML = '<span style="display:inline-block; animation:spin 1s linear infinite;">⏳</span> Dispatching...';
+    try {
+        const body = {
+            phone: $('c-phone').value, lead_name: $('c-name').value,
+            business_name: $('c-biz').value, service_type: $('c-service').value
+        };
+        if ($('c-profile').value) body.agent_profile_id = $('c-profile').value;
+        if ($('c-custom-check').checked) body.system_prompt = $('c-prompt').value;
+        
+        await apiPost('/api/call', body);
+        toast('Call dispatched!');
+    } catch(e) { toast(e.message, 'error'); }
+    finally { btn.disabled = false; btn.innerHTML = originalText; }
+}
+
+// Batch Call
+function parseBatchCSV() {
+    const file = $('bc-file').files[0];
+    if(!file) return toast('Select a CSV file first', 'error');
+    const reader = new FileReader();
+    reader.onload = e => {
+        const text = e.target.result;
+        const lines = text.split('\n').filter(l=>l.trim());
+        const headers = lines[0].split(',').map(h=>h.trim().toLowerCase());
+        const pIdx = headers.indexOf('phone');
+        if(pIdx === -1) return toast('CSV must have a "phone" column', 'error');
+        
+        batchContacts = lines.slice(1).map(l => {
+            const row = l.split(',');
+            const c = {};
+            headers.forEach((h,i) => c[h] = row[i]?.trim());
+            return c;
+        }).filter(c => c.phone);
+        
+        $('bc-total').textContent = batchContacts.length;
+        $('bc-done').textContent = '0';
+        $('bc-progress').style.width = '0%';
+        $('bc-start-btn').disabled = false;
+        
+        const tbody = document.querySelector('#bc-table tbody');
+        tbody.innerHTML = batchContacts.slice(0,5).map(c => 
+            `<tr><td>${c.phone}</td><td>${c.lead_name||''}</td><td>${c.business_name||''}</td><td>${c.service_type||''}</td><td>Ready</td></tr>`
+        ).join('');
+        $('bc-preview-wrap').classList.remove('hidden');
+    };
+    reader.readAsText(file);
+}
+
+async function startBatchCall() {
+    if(!batchContacts.length) return;
+    batchRunning = true;
+    $('bc-start-btn').classList.add('hidden');
+    $('bc-stop-btn').classList.remove('hidden');
+    const delay = parseInt($('bc-delay').value) * 1000;
+    const profile = $('bc-profile').value;
+    
+    for(let i=0; i<batchContacts.length; i++) {
+        if(!batchRunning) break;
+        const c = batchContacts[i];
+        try {
+            await apiPost('/api/call', {
+                phone: c.phone, lead_name: c.lead_name||'there',
+                business_name: c.business_name||'our company', service_type: c.service_type||'our service',
+                agent_profile_id: profile || null
+            });
+            $('bc-done').textContent = i+1;
+            $('bc-progress').style.width = ((i+1)/batchContacts.length*100)+'%';
+        } catch(e) { console.error('Batch error', e); }
+        if(i < batchContacts.length-1) await new Promise(r => setTimeout(r, delay));
+    }
+    stopBatchCall();
+    toast('Batch complete');
+}
+function stopBatchCall() {
+    batchRunning = false;
+    $('bc-start-btn').classList.remove('hidden');
+    $('bc-start-btn').disabled = true;
+    $('bc-stop-btn').classList.add('hidden');
+}
+
+// Campaigns
+async function loadCampaigns() {
+    try {
+        const data = await api('/api/campaigns');
+        const tbody = $('camp-list');
+        if (!data || !data.length) {
+            tbody.innerHTML = emptyRow(6, 'No campaigns created yet.');
+            return;
+        }
+        tbody.innerHTML = data.map(c => `
+            <tr>
+                <td><b>${c.name}</b><br><small class="text-muted">ID: ${c.id.substring(0,8)}</small></td>
+                <td>${getOutcomeBadge(c.status)}</td>
+                <td>${c.schedule_type} @ ${c.schedule_time}</td>
+                <td>${c.total_dispatched} sent / ${c.total_failed} fail<br><small class="text-muted">Last: ${c.last_run_at ? fmtDate(c.last_run_at) : 'Never'}</small></td>
+                <td>${fmtDate(c.created_at)}</td>
+                <td>
+                    <button class="secondary" onclick="runCampaign('${c.id}')" title="Run Now">▶️</button>
+                    ${c.status==='active' ? `<button class="secondary" onclick="toggleCampaignStatus('${c.id}','paused')">⏸️</button>` : `<button class="secondary" onclick="toggleCampaignStatus('${c.id}','active')">▶️</button>`}
+                    <button class="danger" onclick="deleteCampaign('${c.id}')">🗑️</button>
+                </td>
+            </tr>
+        `).join('');
+    } catch(e) { console.error(e); }
+}
+
+function toggleCampaignForm() {
+    const w = $('camp-form-wrap');
+    w.classList.toggle('hidden');
+}
+
+function createCampaign() {
+    const file = $('camp-file').files[0];
+    if(!file) return toast('Select CSV', 'error');
+    const reader = new FileReader();
+    reader.onload = async e => {
+        const text = e.target.result;
+        const lines = text.split('\n').filter(l=>l.trim());
+        const headers = lines[0].split(',').map(h=>h.trim().toLowerCase());
+        const contacts = lines.slice(1).map(l => {
+            const row = l.split(',');
+            const c = {};
+            headers.forEach((h,i) => c[h] = row[i]?.trim());
+            return c;
+        }).filter(c => c.phone);
+        
+        try {
+            await apiPost('/api/campaigns', {
+                name: $('camp-name').value,
+                contacts: contacts,
+                schedule_type: $('camp-schedule').value,
+                schedule_time: $('camp-time').value,
+                call_delay_seconds: parseInt($('camp-delay').value),
+                agent_profile_id: $('camp-profile').value || null
+            });
+            toast('Campaign created');
+            toggleCampaignForm();
+            loadCampaigns();
+        } catch(err) { toast(err.message, 'error'); }
+    };
+    reader.readAsText(file);
+}
+
+window.runCampaign = async (id) => {
+    try { await apiPost(`/api/campaigns/${id}/run`, {}); toast('Dispatching...'); loadCampaigns(); } catch(e){ toast(e.message, 'error'); }
+};
+window.toggleCampaignStatus = async (id, status) => {
+    try { await apiPatch(`/api/campaigns/${id}/status`, {status}); loadCampaigns(); } catch(e){ toast(e.message, 'error'); }
+};
+window.deleteCampaign = async (id) => {
+    if(!confirm('Delete campaign?')) return;
+    try { await apiDel(`/api/campaigns/${id}`); loadCampaigns(); } catch(e){ toast(e.message, 'error'); }
+};
+
+// Agent Profiles
+async function loadAgentProfiles() {
+    try {
+        const data = await api('/api/agent-profiles');
+        const arr = Array.isArray(data) ? data : [];
+        
+        // Update Table
+        if (!arr.length) {
+            $('agent-list').innerHTML = emptyRow(7, 'No agent profiles found.');
+        } else {
+            $('agent-list').innerHTML = arr.map(a => `
+            <tr>
+                <td><b>${esc(a.name)}</b></td>
+                <td>${getChannelBadge(a.channel_mode || 'voice')}</td>
+                <td>${esc(a.voice)}</td>
+                <td><small>${a.model}</small></td>
+                <td><small>${esc((a.enabled_tools || '').replace(/","/g, '", "'))}</small></td>
+                <td>${a.is_default ? '<span class="badge booked">Default</span>' : ''}</td>
+                <td>
+                    <button class="secondary" onclick="editAgentProfile('${a.id}')">✏️</button>
+                    ${!a.is_default ? `<button class="secondary" onclick="setDefaultAgentProfile('${a.id}')">⭐</button>` : ''}
+                    <button class="danger" onclick="deleteAgentProfile('${a.id}')">🗑️</button>
+                </td>
+            </tr>
+        `).join('');
+        }
+        
+        // Update Dropdowns
+        const opts = `<option value="">-- None (Use Settings) --</option>` + arr.map(a => `<option value="${a.id}">${a.name} ${a.is_default?'(Default)':''}</option>`).join('');
+        $('c-profile').innerHTML = opts;
+        $('bc-profile').innerHTML = opts;
+        $('camp-profile').innerHTML = opts;
+        
+        // Auto-select default if exists
+        const def = arr.find(a => a.is_default);
+        if(def) {
+            $('c-profile').value = def.id;
+            $('bc-profile').value = def.id;
+            $('camp-profile').value = def.id;
+        }
+        
+    } catch(e) { console.error(e); }
+}
+
+window.resetAgentForm = () => {
+    if (!knowledgeBasesCache.length) loadKnowledgeBases(false);
+    $('ag-id').value = '';
+    $('ag-name').value = '';
+    $('ag-voice').value = 'Aoede';
+    $('ag-model').value = 'gemini-3.1-flash-live-preview';
+    setAgentChannelMode('voice');
+    document.querySelectorAll('input[name="ag-channel-choice"]').forEach(el => el.checked = el.value === 'voice');
+    $('ag-confidence').value = '0.55';
+    $('ag-prompt').value = '';
+    $('ag-voice-prompt').value = '';
+    $('ag-text-prompt').value = '';
+    $('ag-tools').value = '["check_availability", "book_appointment", "end_call", "lookup_contact", "remember_details", "search_knowledge"]';
+    $('ag-initiation').value = 'agent';
+    $('ag-first-message').value = '';
+    $('ag-first-msg-wrap').classList.remove('hidden');
+    $('ag-default').checked = false;
+    renderAgentKnowledgeChoices([]);
+    $('ag-test-result').classList.add('hidden');
+    $('agent-form-title').textContent = 'Create Agent Profile';
+    $('agent-form-mode-badge').textContent = 'Draft';
+};
+
+window.saveAgentProfile = async () => {
+    const id = $('ag-id').value;
+    const body = {
+        name: $('ag-name').value, voice: $('ag-voice').value, model: $('ag-model').value,
+        system_prompt: $('ag-prompt').value, enabled_tools: $('ag-tools').value, is_default: $('ag-default').checked,
+        conversation_initiation: $('ag-initiation').value,
+        first_message: $('ag-first-message').value,
+        channel_mode: $('ag-channel-mode').value,
+        voice_prompt_override: $('ag-voice-prompt').value,
+        text_prompt_override: $('ag-text-prompt').value,
+        knowledge_confidence_threshold: parseFloat($('ag-confidence').value || '0.55'),
+        knowledge_base_ids: Array.from(document.querySelectorAll('.ag-kb-check:checked')).map(el => el.value),
+    };
+    try {
+        if(id) await apiPut(`/api/agent-profiles/${id}`, body);
+        else await apiPost(`/api/agent-profiles`, body);
+        toast('Profile saved');
+        $('agent-form-wrap').classList.add('hidden');
+        loadAgentProfiles();
+    } catch(e) { toast(e.message, 'error'); }
+};
+
+window.editAgentProfile = async (id) => {
+    try {
+        if (!knowledgeBasesCache.length) await loadKnowledgeBases(false);
+        const p = await api(`/api/agent-profiles/${id}`);
+        $('ag-id').value = p.id;
+        $('ag-name').value = p.name;
+        $('ag-voice').value = p.voice;
+        $('ag-model').value = p.model;
+        setAgentChannelMode(p.channel_mode || 'voice');
+        document.querySelectorAll('input[name="ag-channel-choice"]').forEach(el => el.checked = el.value === (p.channel_mode || 'voice'));
+        $('ag-confidence').value = p.knowledge_confidence_threshold || '0.55';
+        $('ag-prompt').value = p.system_prompt || '';
+        $('ag-voice-prompt').value = p.voice_prompt_override || '';
+        $('ag-text-prompt').value = p.text_prompt_override || '';
+        $('ag-tools').value = p.enabled_tools;
+        $('ag-initiation').value = p.conversation_initiation || 'agent';
+        $('ag-first-message').value = p.first_message || '';
+        $('ag-first-msg-wrap').classList.toggle('hidden', (p.conversation_initiation || 'agent') !== 'agent');
+        $('ag-default').checked = p.is_default === 1;
+        renderAgentKnowledgeChoices(p.knowledge_base_ids || []);
+        $('agent-form-title').textContent = 'Edit Agent Profile';
+        $('agent-form-wrap').classList.remove('hidden');
+    } catch(e) { toast(e.message, 'error'); }
+};
+
+window.deleteAgentProfile = async (id) => {
+    if(!confirm('Delete profile?')) return;
+    try { await apiDel(`/api/agent-profiles/${id}`); loadAgentProfiles(); } catch(e) { toast(e.message, 'error'); }
+};
+window.setDefaultAgentProfile = async (id) => {
+    try { await apiPost(`/api/agent-profiles/${id}/set-default`, {}); loadAgentProfiles(); } catch(e) { toast(e.message, 'error'); }
+};
+
+window.testAgentProfile = async () => {
+    const id = $('ag-id').value;
+    if (!id) return toast('Save the agent before testing knowledge behavior', 'error');
+    try {
+        const d = await apiPost('/api/agent-test', {
+            agent_profile_id: id,
+            channel: $('ag-test-channel').value,
+            message: $('ag-test-message').value || 'What should I know?',
+        });
+        const sources = (d.sources || []).map(s => `<li>${esc(s.title)} (${Number(s.score || 0).toFixed(2)})</li>`).join('');
+        const confidence = Number(d.confidence || 0);
+        $('ag-test-result').innerHTML = `
+            <div class="flex-between">
+                <div><b>Response source:</b> ${esc(d.source)}</div>
+                <span class="badge ${d.fallback_triggered ? 'warning' : 'active'}">${d.fallback_triggered ? 'Fallback' : 'Grounded'}</span>
+            </div>
+            <div class="result-meter"><span style="width:${Math.max(0, Math.min(100, confidence * 100))}%"></span></div>
+            <div class="text-muted">Confidence ${confidence.toFixed(2)} / Threshold ${Number(d.threshold || 0).toFixed(2)}</div>
+            <p style="margin-top:8px; white-space:pre-wrap;">${esc(d.response)}</p>
+            ${sources ? `<div class="mt-1"><b>Sources used</b><ul>${sources}</ul></div>` : ''}
+        `;
+        $('ag-test-result').classList.remove('hidden');
+    } catch(e) { toast(e.message, 'error'); }
+};
+
+// Knowledge Base
+async function loadKnowledgeBases(renderList=true) {
+    try {
+        knowledgeBasesCache = await api('/api/knowledge-bases');
+        if ($('kb-stat-bases')) $('kb-stat-bases').textContent = knowledgeBasesCache.length;
+        if ($('kb-stat-active')) $('kb-stat-active').textContent = knowledgeBasesCache.filter(kb => (kb.status || 'active') === 'active').length;
+        if (renderList && $('kb-list')) {
+            if (!knowledgeBasesCache.length) {
+                $('kb-list').innerHTML = '<div class="text-center text-muted" style="padding:40px;">No knowledge bases created yet.</div>';
+            } else {
+                $('kb-list').innerHTML = knowledgeBasesCache.map(kb => `
+                    <button class="kb-row ${activeKnowledgeBaseId === kb.id ? 'active' : ''}" onclick="openKnowledgeBase('${kb.id}')">
+                        <span>
+                            <span class="kb-row-title">${esc(kb.name)}</span>
+                            <span class="kb-row-meta">${esc(kb.description || 'Reusable business knowledge')}</span>
+                            <span class="kb-row-meta">Updated ${fmtDate(kb.updated_at || kb.created_at)}</span>
+                        </span>
+                        ${getOutcomeBadge(kb.status || 'active')}
+                    </button>
+                `).join('');
+            }
+        }
+        renderAgentKnowledgeChoices();
+    } catch(e) { console.error(e); }
+}
+
+function renderAgentKnowledgeChoices(selected=null) {
+    const el = $('ag-kb-list');
+    if (!el) return;
+    if (selected === null) {
+        selected = Array.from(document.querySelectorAll('.ag-kb-check:checked')).map(input => input.value);
+    }
+    if (!knowledgeBasesCache.length) {
+        el.innerHTML = '<div class="text-muted">No knowledge bases yet. Create one from the Knowledge Base module.</div>';
+        return;
+    }
+    el.innerHTML = knowledgeBasesCache.map(kb => `
+        <label class="check-card">
+            <input type="checkbox" class="ag-kb-check" value="${kb.id}" ${selected.includes(kb.id) ? 'checked' : ''}>
+            <span><b>${esc(kb.name)}</b><br><small class="text-muted">${esc(kb.description || 'Reusable business knowledge')}</small></span>
+        </label>
+    `).join('');
+}
+
+window.saveKnowledgeBase = async () => {
+    try {
+        await apiPost('/api/knowledge-bases', {name: $('kb-name').value, description: $('kb-description').value});
+        $('kb-name').value = '';
+        $('kb-description').value = '';
+        $('kb-form-wrap').classList.add('hidden');
+        toast('Knowledge base created');
+        loadKnowledgeBases(true);
+    } catch(e) { toast(e.message, 'error'); }
+};
+
+window.openKnowledgeBase = async (id) => {
+    try {
+        activeKnowledgeBaseId = id;
+        const kb = await api(`/api/knowledge-bases/${id}`);
+        $('kb-active-id').value = id;
+        $('kb-detail-title').textContent = kb.name;
+        $('kb-detail-description').textContent = kb.description || 'Manual business knowledge entries';
+        $('kb-detail-chip').textContent = `${(kb.entries || []).length} entries`;
+        if ($('kb-stat-selected')) $('kb-stat-selected').textContent = kb.name.length > 12 ? kb.name.slice(0, 12) + '...' : kb.name;
+        $('kb-entry-form').classList.remove('hidden');
+        loadKnowledgeBases(true);
+        const entries = kb.entries || [];
+        $('kb-entry-list').innerHTML = entries.length ? entries.map(e => `
+            <div class="entry-card">
+                <div class="flex-between">
+                    <b>${esc(e.title)}</b>
+                    <button class="danger" onclick="deleteKnowledgeEntry('${e.id}')">Delete</button>
+                </div>
+                <div class="entry-meta">
+                    <span class="badge default">${esc(e.content_type)}</span>
+                    ${e.category ? `<span class="chip">${esc(e.category)}</span>` : ''}
+                </div>
+                <p>${esc((e.content || '').slice(0, 420))}${(e.content || '').length > 420 ? '...' : ''}</p>
+            </div>
+        `).join('') : '<p class="text-muted">No entries yet.</p>';
+    } catch(e) { toast(e.message, 'error'); }
+};
+
+window.applyKnowledgeTemplate = (type) => {
+    const templates = {
+        faq: {
+            title: 'FAQ: ',
+            category: 'FAQ',
+            content: 'Question:\n\nAnswer:\n\nWhen to use this answer:\n'
+        },
+        pricing: {
+            title: 'Pricing: ',
+            category: 'Pricing',
+            content: 'Plan or service:\nPrice:\nIncludes:\nLimitations:\nBest for:\n'
+        },
+        objection: {
+            title: 'Objection: ',
+            category: 'Sales',
+            content: 'Customer objection:\nRecommended response:\nFollow-up question:\nWhen to fallback:\n'
+        },
+        appointment_rule: {
+            title: 'Appointment Rule: ',
+            category: 'Scheduling',
+            content: 'Rule:\nAvailable days/times:\nRequired customer details:\nConfirmation wording:\n'
+        },
+    };
+    const t = templates[type];
+    if (!t) return;
+    $('ke-type').value = type;
+    $('ke-title').value = t.title;
+    $('ke-category').value = t.category;
+    $('ke-content').value = t.content;
+    $('ke-tags').value = type.replace('_', ', ');
+    $('ke-title').focus();
+};
+
+window.saveKnowledgeEntry = async () => {
+    const kbId = $('kb-active-id').value;
+    try {
+        await apiPost(`/api/knowledge-bases/${kbId}/entries`, {
+            title: $('ke-title').value,
+            content: $('ke-content').value,
+            content_type: $('ke-type').value,
+            category: $('ke-category').value,
+            tags: $('ke-tags').value.split(',').map(t => t.trim()).filter(Boolean),
+        });
+        ['ke-title','ke-content','ke-category','ke-tags'].forEach(id => $(id).value = '');
+        toast('Knowledge entry added');
+        openKnowledgeBase(kbId);
+    } catch(e) { toast(e.message, 'error'); }
+};
+
+window.deleteKnowledgeEntry = async (id) => {
+    if(!confirm('Delete knowledge entry?')) return;
+    const kbId = $('kb-active-id').value;
+    try { await apiDel(`/api/knowledge-entries/${id}`); openKnowledgeBase(kbId); } catch(e) { toast(e.message, 'error'); }
+};
+
+window.deleteKnowledgeBase = async (id) => {
+    if(!confirm('Delete this knowledge base and its entries?')) return;
+    try { await apiDel(`/api/knowledge-bases/${id}`); loadKnowledgeBases(true); } catch(e) { toast(e.message, 'error'); }
+};
+
+// Prompt
+async function loadPrompt() {
+    try {
+        const d = await api('/api/prompt');
+        $('global-prompt').value = d.prompt;
+        $('prompt-status').textContent = d.is_custom ? 'Customized' : 'Default Template';
+        $('prompt-status').className = 'badge ' + (d.is_custom ? 'dispatched' : 'default');
+        $('prompt-len').textContent = d.prompt.length + ' chars';
+    } catch(e) {}
+}
+window.savePrompt = async () => {
+    try {
+        await apiPost('/api/prompt', {prompt: $('global-prompt').value});
+        toast('Prompt saved');
+        loadPrompt();
+    } catch(e) { toast(e.message, 'error'); }
+};
+window.resetPrompt = async () => {
+    if(!confirm('Reset to default?')) return;
+    try { await apiDel('/api/prompt'); toast('Prompt reset'); loadPrompt(); } catch(e) { toast(e.message, 'error'); }
+};
+$('global-prompt').addEventListener('input', e => $('prompt-len').textContent = e.target.value.length + ' chars');
+
+// Appointments
+async function loadAppointments() {
+    const d = $('apt-date').value;
+    try {
+        const data = await api(`/api/appointments${d ? '?date='+d : ''}`);
+        if (!data || !data.length) {
+            $('apt-list').innerHTML = emptyRow(7, 'No appointments scheduled.');
+            return;
+        }
+        $('apt-list').innerHTML = data.map(a => `
+            <tr>
+                <td>${a.date}</td>
+                <td>${a.time}</td>
+                <td><b>${a.name}</b></td>
+                <td>${a.phone}</td>
+                <td>${a.service}</td>
+                <td>${getOutcomeBadge(a.status)}</td>
+                <td>${a.status === 'booked' ? `<button class="danger" onclick="cancelAppointment('${a.id}')">Cancel</button>` : ''}</td>
+            </tr>
+        `).join('');
+    } catch(e) {}
+}
+window.cancelAppointment = async (id) => {
+    if(!confirm('Cancel appointment?')) return;
+    try { await apiDel(`/api/appointments/${id}`); loadAppointments(); } catch(e) { toast(e.message, 'error'); }
+};
+
+// Call Logs
+async function loadCalls(page=1) {
+    logsPage = page;
+    $('log-page-indicator').textContent = 'Page ' + page;
+    try {
+        const data = await api(`/api/calls?page=${page}&limit=20`);
+        if (!data || !data.length) {
+            $('logs-list').innerHTML = emptyRow(7, 'No call logs available.');
+            return;
+        }
+        $('logs-list').innerHTML = data.map(c => `
+            <tr>
+                <td><small>${fmtDate(c.timestamp)}</small></td>
+                <td>${c.phone_number}</td>
+                <td>${c.lead_name || '-'}</td>
+                <td>${getOutcomeBadge(c.outcome)}</td>
+                <td>${c.duration_seconds}s</td>
+                <td>${c.recording_url ? `<a href="${c.recording_url}" target="_blank" style="color:var(--accent)">🔊 Play</a>` : '-'}</td>
+                <td>
+                    <div style="font-size:11px; margin-bottom:5px">${c.reason||''}</div>
+                    <textarea style="min-height:40px; padding:4px" onchange="saveNotes('${c.id}', this.value)">${c.notes||''}</textarea>
+                </td>
+            </tr>
+        `).join('');
+    } catch(e) {}
+}
+window.changeLogPage = (delta) => {
+    if(logsPage + delta < 1) return;
+    loadCalls(logsPage + delta);
+};
+window.saveNotes = async (id, notes) => {
+    try { await apiPatch(`/api/calls/${id}/notes`, {notes}); toast('Notes saved'); } catch(e) { toast(e.message, 'error'); }
+};
+
+// CRM
+async function loadCRM() {
+    try {
+        const d = await api('/api/crm');
+        if (!d.data || !d.data.length) {
+            $('crm-list').innerHTML = emptyRow(5, 'No contacts in CRM yet.');
+            return;
+        }
+        $('crm-list').innerHTML = d.data.map(c => `
+            <tr style="cursor:pointer" onclick="loadContactDetail('${c.phone_number}')">
+                <td>${c.phone_number}</td>
+                <td>${c.lead_name||'-'}</td>
+                <td>${c.total_calls}</td>
+                <td>${c.booked}</td>
+                <td>${fmtDate(c.last_call)}</td>
+            </tr>
+        `).join('');
+    } catch(e){}
+}
+window.loadContactDetail = async (phone) => {
+    try {
+        const d = await api(`/api/crm/calls?phone=${encodeURIComponent(phone)}`);
+        $('crm-detail').style.display = 'block';
+        $('crm-d-phone').textContent = phone;
+        $('crm-d-calls').innerHTML = d.data.map(c => `
+            <div class="mb-1 p-1" style="border-bottom:1px solid var(--border)">
+                <div class="flex-between">
+                    <small>${fmtDate(c.timestamp)}</small>
+                    ${getOutcomeBadge(c.outcome)}
+                </div>
+                <div style="font-size:12px" class="mt-1">${c.reason||''}</div>
+                ${c.notes ? `<div style="font-size:12px; color:var(--warn)">📝 ${c.notes}</div>` : ''}
+            </div>
+        `).join('');
+    } catch(e){}
+};
+
+// Settings
+async function loadSettings() {
+    try {
+        const s = await api('/api/settings');
+        Object.keys(s).forEach(k => {
+            const el = $(`set-${k}`);
+            if(el) {
+                if(s[k].configured && el.type === 'password') el.placeholder = '******** (Configured)';
+                else el.value = s[k].value;
+            }
+        });
+    } catch(e){}
+}
+window.saveGroup = async (group) => {
+    let keys = [];
+    if(group === 'livekit') keys = ['LIVEKIT_URL', 'LIVEKIT_API_KEY', 'LIVEKIT_API_SECRET'];
+    if(group === 'gemini') keys = ['GOOGLE_API_KEY', 'GEMINI_MODEL', 'GEMINI_TTS_VOICE'];
+    if(group === 'vobiz') keys = ['VOBIZ_SIP_DOMAIN', 'VOBIZ_USERNAME', 'VOBIZ_PASSWORD', 'VOBIZ_OUTBOUND_NUMBER'];
+    if(group === 'twilio') keys = ['TWILIO_ACCOUNT_SID', 'TWILIO_AUTH_TOKEN', 'TWILIO_FROM_NUMBER'];
+    if(group === 'calcom') keys = ['CALCOM_API_KEY', 'CALCOM_EVENT_TYPE_ID', 'CALCOM_TIMEZONE'];
+    
+    const settings = {};
+    keys.forEach(k => settings[k] = $(`set-${k}`).value);
+    try { await apiPost('/api/settings', {settings}); toast('Saved configuration'); loadLiveConfig(); } catch(e){ toast(e.message, 'error'); }
+};
+window.createSIPTrunk = async () => {
+    try {
+        const d = await apiPost('/api/setup/trunk', {});
+        $('set-OUTBOUND_TRUNK_ID').value = d.trunk_id;
+        toast('Trunk created: ' + d.trunk_id);
+        loadLiveConfig();
+    } catch(e) { toast(e.message, 'error'); }
+};
+window.saveToolToggles = async () => {
+    try {
+        const v = $('set-ENABLED_TOOLS').value;
+        JSON.parse(v); // validate
+        await apiPost('/api/settings', {settings: {'ENABLED_TOOLS': v}});
+        toast('Tools saved');
+    } catch(e) { toast('Invalid JSON array', 'error'); }
+};
+
+// Syslogs
+async function loadSysLogs() {
+    if(currentTab !== 'syslogs') return;
+    const lvl = $('log-level').value;
+    try {
+        const logs = await api(`/api/logs?limit=100${lvl ? '&level='+lvl : ''}`);
+        $('terminal-out').innerHTML = logs.map(l => `
+            <div class="log-line">
+                <span class="log-time">[${fmtDate(l.timestamp)}]</span>
+                <span class="badge ${l.level==='error'?'error':l.level==='warning'?'warning':'info'}">${l.level}</span>
+                <b>[${l.source}]</b> ${l.message}
+                ${l.detail ? `<br><span style="color:#888">${l.detail}</span>` : ''}
+            </div>
+        `).join('');
+    } catch(e){}
+}
+
+function init() {
+    loadStats();
+    setInterval(() => { if(currentTab==='stats') loadStats(); }, 10000);
+    setInterval(() => { if(currentTab==='syslogs') loadSysLogs(); }, 5000);
+    loadAgentProfiles();
+}
+document.addEventListener('DOMContentLoaded', init);
+</script>
+</body>
+</html>
