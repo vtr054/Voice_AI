@@ -4,4 +4,6 @@ venv/
 __pycache__/
 *.pyc
 *.db
-dashboard/
+dashboard/node_modules/
+dashboard/.next/
+dashboard/out/
