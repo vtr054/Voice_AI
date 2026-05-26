@@ -17,7 +17,7 @@ def _certifi_ssl(purpose=ssl.Purpose.SERVER_AUTH, **kwargs):
 ssl.create_default_context = _certifi_ssl
 
 from livekit import agents, api, rtc
-from livekit.agents import Agent, AgentSession, RoomInputOptions
+from livekit.agents import Agent, AgentSession, RoomInputOptions, llm
 try:
     from livekit.agents import RoomOptions as _RoomOptions
     _HAS_ROOM_OPTIONS = True
@@ -102,13 +102,6 @@ except ImportError:
 def _build_session(tools: list, system_prompt: str) -> AgentSession:
     """
     Build AgentSession with Gemini Live or pipeline fallback.
-
-    CRITICAL SILENCE-PREVENTION CONFIG — all 3 required:
-    1. SessionResumptionConfig(transparent=True) → auto-reconnects after timeout
-    2. ContextWindowCompressionConfig → sliding window prevents token limit freeze
-    3. RealtimeInputConfig(END_SENSITIVITY_LOW) → less aggressive VAD, 2s silence threshold
-
-    ⚠️ EndSensitivity MUST use full string form: END_SENSITIVITY_LOW (not .LOW — AttributeError!)
     """
     gemini_model = os.getenv("GEMINI_MODEL", "gemini-3.1-flash-live-preview")
     gemini_voice = os.getenv("GEMINI_TTS_VOICE", "Aoede")
@@ -132,7 +125,6 @@ def _build_session(tools: list, system_prompt: str) -> AgentSession:
                 trigger_tokens=25600,
                 sliding_window=_gt.SlidingWindow(target_tokens=12800),
             )
-            logger.info("Silence-prevention config applied (VAD LOW, transparent resumption, context compression)")
         except Exception as _cfg_err:
             logger.warning("Could not build silence-prevention config: %s", _cfg_err)
             _realtime_input_cfg = None
@@ -153,26 +145,16 @@ def _build_session(tools: list, system_prompt: str) -> AgentSession:
     logger.info("SESSION MODE: pipeline (Deepgram STT + Gemini LLM + Google TTS)")
     stt = _deepgram_stt(model="nova-3", language="multi") if _deepgram_stt else None
     tts = _google_tts() if _google_tts else None
-    return AgentSession(stt=stt, llm=_google_llm(model="gemini-2.0-flash"), tts=tts, vad=silero.VAD.load(), tools=tools)
+    vad = silero.VAD.load(min_speech_duration=0.2, min_silence_duration=0.5)
+    return AgentSession(stt=stt, llm=_google_llm(model="gemini-2.0-flash"), tts=tts, vad=vad, tools=tools)
 
 
 class OutboundAssistant(Agent):
-    def __init__(self, instructions: str) -> None:
-        super().__init__(instructions=instructions)
+    def __init__(self, instructions: str, chat_ctx: Optional[llm.ChatContext] = None) -> None:
+        super().__init__(instructions=instructions, chat_ctx=chat_ctx)
 
 
 async def entrypoint(ctx: agents.JobContext) -> None:
-    """
-    Main entrypoint. Called per job. Reads metadata JSON from ctx.job.metadata.
-
-    DIAL-FIRST PATTERN — CRITICAL:
-    Start Gemini Live ONLY after create_sip_participant(wait_until_answered=True) completes.
-    If you start the session during ring time (~20-30s), the Gemini idle timeout fires
-    and the session dies silently before the call is even answered.
-
-    NO close_on_disconnect — SIP legs have brief audio dropouts that look like disconnects.
-    Instead, watch participant_disconnected event for the specific SIP identity.
-    """
     await _log("info", f"Job started — room: {ctx.room.name}")
 
     phone_number: Optional[str] = None
@@ -208,6 +190,34 @@ async def entrypoint(ctx: agents.JobContext) -> None:
 
     await _log("info", f"Call job received — phone={phone_number} lead={lead_name} biz={business_name}")
 
+    # Apply overrides early so we can check if we are using a native audio model
+    if voice_override:
+        os.environ["GEMINI_TTS_VOICE"] = voice_override
+    if model_override:
+        os.environ["GEMINI_MODEL"] = model_override
+
+    _active_model = os.getenv("GEMINI_MODEL", "gemini-3.1-flash-live-preview")
+    is_native_audio = "3.1" in _active_model or "2.5" in _active_model
+    is_gemini_3_1 = "3.1" in _active_model
+
+    # ── Connect ──────────────────────────────────────────────────────────────
+    # Connect early so we can inspect remote participants if the call was placed externally
+    await ctx.connect()
+    await _log("info", f"Connected to LiveKit room: {ctx.room.name}")
+
+    # Extract dynamic variables passed by the dialer from remote participants if present
+    for participant in ctx.room.remote_participants.values():
+        if participant.metadata:
+            try:
+                p_data = json.loads(participant.metadata)
+                p_name = p_data.get("name") or p_data.get("lead_name")
+                if p_name:
+                    await _log("info", f"Extracted lead name from participant metadata: {p_name}")
+                    lead_name = p_name
+            except Exception as e:
+                await _log("warning", f"Failed to parse participant metadata: {e}")
+
+    # Load Knowledge Base
     knowledge_context = ""
     if agent_profile_id:
         try:
@@ -223,19 +233,26 @@ async def entrypoint(ctx: agents.JobContext) -> None:
         except Exception as exc:
             await _log("warning", f"Could not preload knowledge context: {exc}")
 
+    # Build Prompt
     system_prompt = build_prompt(lead_name=lead_name, business_name=business_name,
                                   service_type=service_type, custom_prompt=custom_prompt,
                                   channel=channel_mode, knowledge_context=knowledge_context)
     
+    # ── Option 2 Implementation: Inject dynamic greeting before session starts ──
     if initiation == "user":
         system_prompt += "\n\nIMPORTANT INSTRUCTION: DO NOT SPEAK FIRST. The call has just connected. Wait silently until the user says something before you begin speaking."
+    elif initiation == "agent" and is_native_audio:
+        if first_message:
+            _fm = first_message.replace("{lead_name}", lead_name).replace("{business_name}", business_name).replace("{service_type}", service_type)
+        else:
+            _fm = f"Ah, hello! Am I speaking with {lead_name}?"
+        system_prompt += (
+            f"\n\nCRITICAL INSTRUCTION: You are an outbound dialer. The user does not know you are calling. "
+            f"You MUST initiate the conversation. Speak immediately upon connection. Do not wait for a prompt or greeting from the user. "
+            f"Your very first sentence must be exactly: '{_fm}'"
+        )
 
     tool_ctx = AppointmentTools(ctx, phone_number, lead_name, agent_profile_id=agent_profile_id)
-
-    if voice_override:
-        os.environ["GEMINI_TTS_VOICE"] = voice_override
-    if model_override:
-        os.environ["GEMINI_MODEL"] = model_override
 
     if tools_override:
         try:
@@ -245,11 +262,7 @@ async def entrypoint(ctx: agents.JobContext) -> None:
     else:
         enabled_tools = await get_enabled_tools()
 
-    # ── Connect ──────────────────────────────────────────────────────────────
-    await ctx.connect()
-    await _log("info", f"Connected to LiveKit room: {ctx.room.name}")
-
-    # ── Dial — MUST come before session.start() ──────────────────────────────
+    # ── Dial — MUST come after session.start() ──────────────────────────────
     if phone_number:
         trunk_id = os.getenv("OUTBOUND_TRUNK_ID")
         if not trunk_id:
@@ -274,30 +287,35 @@ async def entrypoint(ctx: agents.JobContext) -> None:
         await _log("info", f"Call ANSWERED — {phone_number} picked up, starting AI session now")
 
     # ── Build and start Gemini Live ──────────────────────────────────────────
-    gemini_model = os.getenv("GEMINI_MODEL", "gemini-3.1-flash-live-preview")
-    await _log("info", f"Building AI session — model={gemini_model}")
+    await _log("info", f"Building AI session — model={_active_model}")
     active_tools = tool_ctx.build_tool_list(enabled_tools)
     await _log("info", f"Tools loaded: {[t.__name__ for t in active_tools]}")
     session = _build_session(tools=active_tools, system_prompt=system_prompt)
 
-    # Use RoomOptions if available (non-deprecated), else fall back
-    # NEVER use close_on_disconnect=True with SIP — drops on any audio blip
+    initial_chat_ctx = None
+    if initiation == "agent" and is_gemini_3_1:
+        initial_chat_ctx = llm.ChatContext(
+            items=[
+                llm.ChatMessage(role="user", content=["."])
+            ]
+        )
+
     if _HAS_ROOM_OPTIONS:
         from livekit.agents import RoomOptions as _RO
         _session_kwargs = dict(
             room=ctx.room,
-            agent=OutboundAssistant(instructions=system_prompt),
+            agent=OutboundAssistant(instructions=system_prompt, chat_ctx=initial_chat_ctx),
             room_options=_RO(input_options=RoomInputOptions(noise_cancellation=noise_cancellation.BVCTelephony())),
         )
     else:
         _session_kwargs = dict(
             room=ctx.room,
-            agent=OutboundAssistant(instructions=system_prompt),
+            agent=OutboundAssistant(instructions=system_prompt, chat_ctx=initial_chat_ctx),
             room_input_options=RoomInputOptions(noise_cancellation=noise_cancellation.BVCTelephony()),
         )
 
     await session.start(**_session_kwargs)
-    await _log("info", "Agent session started — AI ready, generating greeting")
+    await _log("info", "Agent session started — AI ready.")
 
     # ── Optional S3 recording ────────────────────────────────────────────────
     if phone_number:
@@ -326,36 +344,32 @@ async def entrypoint(ctx: agents.JobContext) -> None:
                 await _log("warning", f"Recording start failed (non-fatal): {_exc}")
 
     # ── Greeting ─────────────────────────────────────────────────────────────
-    # gemini-3.1 and gemini-2.5 native-audio speak autonomously from system prompt.
-    # generate_reply() is blocked by the plugin for these models — skip it entirely.
     if initiation == "agent":
-        _active_model = os.getenv("GEMINI_MODEL", "")
-        if "3.1" in _active_model or "2.5" in _active_model:
-            # Native-audio model speaks autonomously from system prompt.
-            # If a custom first_message was set, inject it as an immediate instruction.
-            if first_message:
-                _fm = first_message.replace("{lead_name}", lead_name).replace("{business_name}", business_name).replace("{service_type}", service_type)
-                try:
-                    await session.generate_reply(instructions=f"Say EXACTLY this as your very first words: {_fm}")
-                except Exception as _gr_exc:
-                    await _log("warning", f"generate_reply (first_message) failed: {_gr_exc}")
+        if is_native_audio:
+            if is_gemini_3_1:
+                # Greeting is triggered autonomously via pre-populated user turn in initial_chat_ctx
+                await _log("info", "Gemini 3.1 native-audio: Greeting triggered autonomously via initial history.")
             else:
-                await _log("info", "Gemini native-audio: model will greet autonomously from system prompt")
+                # Tell the RealtimeModel to generate the initial greeting turn autonomously
+                await _log("info", "Gemini native-audio: Generating initial greeting turn autonomously.")
+                try:
+                    await session.generate_reply()
+                except Exception as _gr_exc:
+                    await _log("warning", f"generate_reply (native-audio) failed: {_gr_exc}")
         else:
-            _fm_text = first_message.replace("{lead_name}", lead_name).replace("{business_name}", business_name).replace("{service_type}", service_type) if first_message else (
-                f"The call just connected. Greet the lead and ask if you're speaking with {lead_name}."
-                if phone_number else "Greet the caller warmly."
-            )
+            # Fallback logic for older pipeline models that still need to be "poked"
+            if first_message:
+                _fm_text = first_message.replace("{lead_name}", lead_name).replace("{business_name}", business_name).replace("{service_type}", service_type)
+            else:
+                _fm_text = f"Ah, hello! Am I speaking with {lead_name}?"
             try:
-                await session.generate_reply(instructions=f"Say EXACTLY this as your first words: {_fm_text}" if first_message else _fm_text)
+                await session.generate_reply(instructions=f"Say EXACTLY this as your first words: {_fm_text}")
             except Exception as _gr_exc:
                 await _log("warning", f"generate_reply failed: {_gr_exc}")
     else:
         await _log("info", "User Speaks First configured: skipping initial AI greeting.")
 
     # ── Keep session alive until SIP participant actually leaves ─────────────
-    # Without this block, the entrypoint returns and the process spins down.
-    # We watch participant_disconnected for the specific SIP identity.
     if phone_number:
         _sip_identity = f"sip_{phone_number}"
         _disconnect_event = asyncio.Event()

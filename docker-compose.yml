@@ -1,9 +1,21 @@
 services:
   voice-agent:
-    build: .
+    build:
+      context: .
+      dockerfile: Dockerfile
     restart: unless-stopped
     env_file:
       - .env
     volumes:
-      - .:/app # For development/hot-reload (remove in prod)
-    network_mode: host # Recommended for WebRTC/Voice low latency
+      - sqlite-data:/data
+    network_mode: host
+
+  dashboard:
+    build:
+      context: ./dashboard
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    network_mode: host
+
+volumes:
+  sqlite-data:

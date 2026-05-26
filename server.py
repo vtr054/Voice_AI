@@ -10,6 +10,7 @@ import certifi
 import aiohttp
 from pathlib import Path
 from typing import Optional
+from contextlib import asynccontextmanager
 
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, Query, Request
@@ -51,20 +52,17 @@ except ImportError:
     _scheduler = None
     logger.warning("APScheduler not installed — campaign scheduling disabled")
 
-app = FastAPI(title="OutboundAI Dashboard", version="1.0.0")
-
-
-@app.on_event("startup")
-async def _startup():
+@asynccontextmanager
+async def lifespan(app: FastAPI):
     if _scheduler:
         _scheduler.start()
         await _reschedule_all_campaigns()
-
-
-@app.on_event("shutdown")
-async def _shutdown():
+    yield
     if _scheduler and _scheduler.running:
         _scheduler.shutdown(wait=False)
+
+
+app = FastAPI(title="OutboundAI Dashboard", version="1.0.0", lifespan=lifespan)
 
 
 async def eff(key: str) -> str:
@@ -737,3 +735,9 @@ async def api_update_campaign_status(campaign_id: str, req: StatusRequest):
         if campaign and campaign.get("schedule_type") in ("daily", "weekdays"):
             _schedule_campaign(campaign_id, campaign["schedule_type"], campaign.get("schedule_time", "09:00"))
     return {"status": req.status}
+
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run("server:app", host="127.0.0.1", port=8000, reload=True)
+
