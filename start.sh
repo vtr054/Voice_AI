@@ -13,8 +13,9 @@ echo "   LiveKit: ${LIVEKIT_URL}"
 echo "   Gemini: ${GEMINI_MODEL:-gemini-3.1-flash-live-preview}"
 echo "   Supabase: ${SUPABASE_URL}"
 
-echo "🌐 Starting FastAPI server on port 8000..."
-python3 -m uvicorn server:app --host 0.0.0.0 --port 8000 &
+BACKEND_PORT=${BACKEND_PORT:-8000}
+echo "🌐 Starting FastAPI server on port ${BACKEND_PORT}..."
+python3 -m uvicorn server:app --host 0.0.0.0 --port ${BACKEND_PORT} &
 SERVER_PID=$!
 
 sleep 2
