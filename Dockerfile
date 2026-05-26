@@ -15,9 +15,11 @@ RUN pip install --no-cache-dir --upgrade pip \
 
 COPY . .
 
+RUN sed -i 's/\r$//' start.sh && chmod +x start.sh
+
 RUN mkdir -p /data
 ENV DB_PATH=/data/appointments.db
 
 EXPOSE 8000
 
-CMD ["sh", "start.sh"]
+CMD ["./start.sh"]
