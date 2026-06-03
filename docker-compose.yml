@@ -1,4 +1,20 @@
+version: "3.9"
+
 services:
+  mysql:
+    image: mysql:8.1
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: "${MYSQL_PASSWORD:-rootpassword}"
+      MYSQL_DATABASE: "${MYSQL_DATABASE:-voice_ai}"
+      MYSQL_USER: "${MYSQL_USER:-root}"
+      MYSQL_PASSWORD: "${MYSQL_PASSWORD:-rootpassword}"
+    ports:
+      - "3306:3306"
+    volumes:
+      - mysql-data:/var/lib/mysql
+      - ./mysql_schema.sql:/docker-entrypoint-initdb.d/mysql_schema.sql:ro
+
   voice-agent:
     build:
       context: .
@@ -6,9 +22,13 @@ services:
     restart: unless-stopped
     env_file:
       - .env
-    volumes:
-      - sqlite-data:/data
-    network_mode: host
+    environment:
+      - MYSQL_HOST=mysql
+      - MYSQL_PORT=3306
+    depends_on:
+      - mysql
+    ports:
+      - "8000:8000"
 
   dashboard:
     build:
@@ -18,9 +38,9 @@ services:
     ports:
       - "3000:3000"
     environment:
-      - BACKEND_URL=http://host.docker.internal:${BACKEND_PORT:-8000}
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
+      - BACKEND_URL=http://voice-agent:8000
+    depends_on:
+      - voice-agent
 
 volumes:
-  sqlite-data:
+  mysql-data:
