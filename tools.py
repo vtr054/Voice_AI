@@ -2,6 +2,7 @@ import asyncio
 import logging
 import os
 import time
+import uuid
 from typing import Optional
 
 from livekit import agents, api
@@ -27,14 +28,17 @@ async def _log(msg: str, detail: str = "", level: str = "info") -> None:
 class AppointmentTools(llm.ToolContext):
     """All function tools available to the appointment-booking agent."""
 
-    def __init__(self, ctx: agents.JobContext, phone_number: Optional[str] = None, lead_name: Optional[str] = None, agent_profile_id: Optional[str] = None):
+    def __init__(self, ctx: agents.JobContext, phone_number: Optional[str] = None, lead_name: Optional[str] = None, agent_profile_id: Optional[str] = None, is_inbound: bool = False):
         self.ctx = ctx
         self.phone_number = phone_number
         self.lead_name = lead_name
         self.agent_profile_id = agent_profile_id
+        self.is_inbound = is_inbound
         self._call_start_time = time.time()
         self._sip_domain = os.getenv("VOBIZ_SIP_DOMAIN", "")
         self.recording_url: Optional[str] = None
+        self.call_id = str(uuid.uuid4())
+        self.call_ending = False
         super().__init__(tools=[])
 
     def build_tool_list(self, enabled: list) -> list:
@@ -91,14 +95,24 @@ class AppointmentTools(llm.ToolContext):
                 phone_number=self.phone_number or "unknown",
                 lead_name=self.lead_name, outcome=outcome, reason=reason,
                 duration_seconds=duration, recording_url=self.recording_url,
+                direction="inbound" if self.is_inbound else "outbound",
+                call_id=self.call_id,
             )
         except Exception as exc:
             logger.error("Failed to log call: %s", exc)
-        try:
-            await self.ctx.room.disconnect()
-        except Exception:
-            pass
-        return "Call ended."
+        
+        self.call_ending = "scheduled"
+        
+        # Fallback safety timer: disconnect after 15 seconds regardless, just in case
+        async def fallback_disconnect():
+            await asyncio.sleep(15.0)
+            try:
+                await self.ctx.room.disconnect()
+            except Exception:
+                pass
+        asyncio.create_task(fallback_disconnect())
+        
+        return "Call logged successfully. Now, say a final polite thank you and goodbye message to the user to end the call, then stop speaking."
 
     @llm.function_tool
     async def transfer_to_human(self, reason: str) -> str:

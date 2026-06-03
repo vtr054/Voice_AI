@@ -291,6 +291,7 @@ function CallsPanel({ toastOk, toastErr }: { toastOk: (msg: string) => void; toa
   const [calls, setCalls] = useState<any[]>([]);
   const [page, setPage] = useState(1);
   const [loading, setLoading] = useState(true);
+  const [selectedTranscript, setSelectedTranscript] = useState<string | null>(null);
 
   const fetchCalls = async (p: number) => {
     setLoading(true);
@@ -322,8 +323,8 @@ function CallsPanel({ toastOk, toastErr }: { toastOk: (msg: string) => void; toa
     <div className="animate-in fade-in slide-in-from-bottom-4 duration-500">
       <SectionTitle
         eyebrow="Call Registry"
-        title="Outbound Calls Log"
-        description="Review all calls initiated by the AI agents, analyze call outcomes, and download/listen to call recording logs."
+        title="Inbound & Outbound Calls Log"
+        description="Review all calls handled by the AI agents, analyze call outcomes, and download/listen to call recording logs."
         action={
           <button
             onClick={() => fetchCalls(page)}
@@ -339,7 +340,7 @@ function CallsPanel({ toastOk, toastErr }: { toastOk: (msg: string) => void; toa
           <div className="h-8 w-8 animate-spin rounded-full border-4 border-amber-400 border-t-transparent"></div>
         </div>
       ) : calls.length === 0 ? (
-        <EmptyState icon={Phone} title="No calls recorded yet" description="All outbound calls triggered from campaigns or single-call UI will appear here." />
+        <EmptyState icon={Phone} title="No calls recorded yet" description="All call logs will appear here." />
       ) : (
         <div className="overflow-hidden rounded-xl border border-white/10 bg-white/[0.02]">
           <div className="overflow-x-auto">
@@ -349,9 +350,11 @@ function CallsPanel({ toastOk, toastErr }: { toastOk: (msg: string) => void; toa
                   <th className="px-6 py-4 font-medium">Timestamp</th>
                   <th className="px-6 py-4 font-medium">Phone Number</th>
                   <th className="px-6 py-4 font-medium">Lead</th>
+                  <th className="px-6 py-4 font-medium">Direction</th>
                   <th className="px-6 py-4 font-medium">Outcome</th>
                   <th className="px-6 py-4 font-medium">Duration</th>
                   <th className="px-6 py-4 font-medium">Recording</th>
+                  <th className="px-6 py-4 font-medium">Transcript</th>
                   <th className="px-6 py-4 font-medium">Reason & Notes</th>
                 </tr>
               </thead>
@@ -361,6 +364,11 @@ function CallsPanel({ toastOk, toastErr }: { toastOk: (msg: string) => void; toa
                     <td className="px-6 py-4 whitespace-nowrap text-xs text-slate-400">{fmtDate(c.timestamp)}</td>
                     <td className="px-6 py-4 font-medium text-white">{c.phone_number}</td>
                     <td className="px-6 py-4 text-slate-300">{c.lead_name || "-"}</td>
+                    <td className="px-6 py-4">
+                      <Badge tone={c.direction === "inbound" ? "blue" : "default"}>
+                        {c.direction === "inbound" ? "Inbound" : "Outbound"}
+                      </Badge>
+                    </td>
                     <td className="px-6 py-4">
                       <Badge tone={getOutcomeTone(c.outcome)}>{c.outcome?.replace("_", " ") || "unknown"}</Badge>
                     </td>
@@ -375,6 +383,18 @@ function CallsPanel({ toastOk, toastErr }: { toastOk: (msg: string) => void; toa
                         >
                           <Volume2 className="h-3.5 w-3.5" /> Play Audio
                         </a>
+                      ) : (
+                        <span className="text-xs text-slate-600">None</span>
+                      )}
+                    </td>
+                    <td className="px-6 py-4">
+                      {c.transcript ? (
+                        <button
+                          onClick={() => setSelectedTranscript(c.transcript)}
+                          className="inline-flex items-center gap-1.5 text-xs font-semibold text-cyan-400 hover:text-cyan-300 transition-colors cursor-pointer"
+                        >
+                          <FileText className="h-3.5 w-3.5" /> View Transcript
+                        </button>
                       ) : (
                         <span className="text-xs text-slate-600">None</span>
                       )}
@@ -412,6 +432,51 @@ function CallsPanel({ toastOk, toastErr }: { toastOk: (msg: string) => void; toa
             >
               Next
             </button>
+          </div>
+        </div>
+      )}
+
+      {/* Transcript Modal */}
+      {selectedTranscript !== null && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4 overflow-y-auto">
+          <div className="relative w-full max-w-2xl rounded-2xl border border-white/10 bg-[#08111f] p-6 shadow-2xl animate-in zoom-in-95 duration-200">
+            <button onClick={() => setSelectedTranscript(null)} className="absolute top-4 right-4 text-slate-400 hover:text-white cursor-pointer">
+              <X className="h-6 w-6" />
+            </button>
+
+            <h3 className="text-xl font-semibold text-white mb-1">Call Transcript</h3>
+            <p className="text-xs text-slate-400 mb-6 font-medium">Complete conversation history between the AI agent and the user.</p>
+
+            <div className="max-h-[60vh] overflow-y-auto pr-2 space-y-4 font-sans text-sm leading-relaxed text-slate-300">
+              {selectedTranscript.split("\n\n").map((para, i) => {
+                if (!para.trim()) return null;
+                const isAgent = para.startsWith("Agent:");
+                const cleanText = para.replace(/^(Agent|User):/, "").trim();
+                return (
+                  <div key={i} className={`flex gap-3 ${isAgent ? "justify-start" : "justify-end"}`}>
+                    <div className={`max-w-[80%] rounded-xl px-4 py-3 shadow-md ${
+                      isAgent 
+                        ? "bg-white/5 border border-white/10 text-slate-200 rounded-tl-none" 
+                        : "bg-amber-400/10 border border-amber-400/20 text-amber-100 rounded-tr-none"
+                    }`}>
+                      <div className="text-[10px] font-bold uppercase tracking-[0.12em] mb-1.5 opacity-60">
+                        {isAgent ? "Agent" : "User"}
+                      </div>
+                      <div className="whitespace-pre-wrap">{cleanText}</div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+            
+            <div className="mt-6 flex justify-end">
+              <button
+                onClick={() => setSelectedTranscript(null)}
+                className="rounded-lg border border-white/10 bg-white/[0.02] px-5 py-2 text-sm font-semibold text-white hover:bg-white/[0.06] cursor-pointer transition-colors"
+              >
+                Close
+              </button>
+            </div>
           </div>
         </div>
       )}
@@ -462,7 +527,7 @@ function LogsPanel({ toastOk, toastErr }: { toastOk: (msg: string) => void; toas
       <SectionTitle
         eyebrow="Diagnostics"
         title="Live Worker Logs"
-        description="Inspect background execution details, webhook notifications, Supabase database connections, and AI pipeline status."
+        description="Inspect background execution details, webhook notifications, MySQL database connections, and AI pipeline status."
         action={
           <div className="flex gap-2">
             <button
@@ -2122,6 +2187,22 @@ function SettingsPanel({ toastOk, toastErr, reloadChips }: { toastOk: (msg: stri
     }
   };
 
+  const handleCreateInboundTrunk = async () => {
+    try {
+      const res = await apiPost("/api/setup/inbound-trunk", {});
+      setSettings((prev) => ({ 
+        ...prev, 
+        INBOUND_TRUNK_ID: res.inbound_trunk_id, 
+        SIP_DISPATCH_RULE_ID: res.sip_dispatch_rule_id 
+      }));
+      toastOk(`Inbound trunk & rule generated successfully!`);
+      fetchSettings();
+      reloadChips();
+    } catch (e: any) {
+      toastErr(e.message);
+    }
+  };
+
   const handleSaveToolsToggles = async () => {
     try {
       const val = settings["ENABLED_TOOLS"] || "[]";
@@ -2277,7 +2358,7 @@ function SettingsPanel({ toastOk, toastErr, reloadChips }: { toastOk: (msg: stri
 
             {activeSubTab === "vobiz" && (
               <div className="space-y-4">
-                <h4 className="text-sm font-semibold text-white">Vobiz SIP Outbound Dialer</h4>
+                <h4 className="text-sm font-semibold text-white">Vobiz SIP Integration</h4>
                 <div className="grid gap-4">
                   <div className="grid gap-4 grid-cols-2">
                     <label className="block">
@@ -2290,7 +2371,7 @@ function SettingsPanel({ toastOk, toastErr, reloadChips }: { toastOk: (msg: stri
                       />
                     </label>
                     <label className="block">
-                      <span className="mb-2 block text-xs font-semibold uppercase tracking-[0.16em] text-slate-400">Trunk ID Override</span>
+                      <span className="mb-2 block text-xs font-semibold uppercase tracking-[0.16em] text-slate-400">Outbound Trunk ID</span>
                       <input
                         value={settings["OUTBOUND_TRUNK_ID"] || ""}
                         onChange={(e) => updateKey("OUTBOUND_TRUNK_ID", e.target.value)}
@@ -2322,7 +2403,7 @@ function SettingsPanel({ toastOk, toastErr, reloadChips }: { toastOk: (msg: stri
                   </div>
                   <div className="grid gap-4 grid-cols-2">
                     <label className="block">
-                      <span className="mb-2 block text-xs font-semibold uppercase tracking-[0.16em] text-slate-400">Outbound Dial Caller ID Number</span>
+                      <span className="mb-2 block text-xs font-semibold uppercase tracking-[0.16em] text-slate-400">SIP Phone Number</span>
                       <input
                         value={settings["VOBIZ_OUTBOUND_NUMBER"] || ""}
                         onChange={(e) => updateKey("VOBIZ_OUTBOUND_NUMBER", e.target.value)}
@@ -2331,7 +2412,7 @@ function SettingsPanel({ toastOk, toastErr, reloadChips }: { toastOk: (msg: stri
                       />
                     </label>
                     <label className="block">
-                      <span className="mb-2 block text-xs font-semibold uppercase tracking-[0.16em] text-slate-400">Call Transfer Agent Number</span>
+                      <span className="mb-2 block text-xs font-semibold uppercase tracking-[0.16em] text-slate-400">Call Transfer Number</span>
                       <input
                         value={settings["DEFAULT_TRANSFER_NUMBER"] || ""}
                         onChange={(e) => updateKey("DEFAULT_TRANSFER_NUMBER", e.target.value)}
@@ -2340,11 +2421,73 @@ function SettingsPanel({ toastOk, toastErr, reloadChips }: { toastOk: (msg: stri
                       />
                     </label>
                   </div>
+                  <div className="flex gap-6 my-2">
+                    <label className="flex items-center gap-2 text-xs font-semibold text-slate-400 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={settings["ENABLE_OUTBOUND"] === "true"}
+                        onChange={(e) => updateKey("ENABLE_OUTBOUND", e.target.checked ? "true" : "false")}
+                        className="rounded border-white/10 bg-black/40 text-amber-400 accent-amber-400"
+                      />
+                      Enable Outbound Calling
+                    </label>
+                    <label className="flex items-center gap-2 text-xs font-semibold text-slate-400 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={settings["ENABLE_INBOUND"] === "true"}
+                        onChange={(e) => updateKey("ENABLE_INBOUND", e.target.checked ? "true" : "false")}
+                        className="rounded border-white/10 bg-black/40 text-amber-400 accent-amber-400"
+                      />
+                      Enable Inbound Calling
+                    </label>
+                  </div>
+                  <label className="block">
+                    <span className="mb-2 block text-xs font-semibold uppercase tracking-[0.16em] text-slate-400">Inbound Receptionist Welcome Message</span>
+                    <textarea
+                      value={settings["INBOUND_GREETING"] || ""}
+                      onChange={(e) => updateKey("INBOUND_GREETING", e.target.value)}
+                      className="w-full rounded-lg border border-white/10 bg-black/40 px-4 py-2.5 text-xs text-white outline-none focus:border-amber-400"
+                      placeholder="Thank you for calling. How can I help you today?"
+                      rows={2}
+                    />
+                  </label>
+                  <div className="grid gap-4 grid-cols-2">
+                    <label className="block">
+                      <span className="mb-2 block text-xs font-semibold uppercase tracking-[0.16em] text-slate-400">Inbound Trunk ID</span>
+                      <input
+                        value={settings["INBOUND_TRUNK_ID"] || ""}
+                        readOnly
+                        className="w-full rounded-lg border border-white/10 bg-black/20 px-4 py-2.5 text-xs text-slate-400 outline-none font-mono"
+                        placeholder="Generated in LiveKit"
+                      />
+                    </label>
+                    <label className="block">
+                      <span className="mb-2 block text-xs font-semibold uppercase tracking-[0.16em] text-slate-400">SIP Dispatch Rule ID</span>
+                      <input
+                        value={settings["SIP_DISPATCH_RULE_ID"] || ""}
+                        readOnly
+                        className="w-full rounded-lg border border-white/10 bg-black/20 px-4 py-2.5 text-xs text-slate-400 outline-none font-mono"
+                        placeholder="Generated in LiveKit"
+                      />
+                    </label>
+                  </div>
                 </div>
                 <div className="flex gap-4 border-t border-white/5 pt-4">
                   <button
                     onClick={() =>
-                      handleSaveGroup(["VOBIZ_SIP_DOMAIN", "OUTBOUND_TRUNK_ID", "VOBIZ_USERNAME", "VOBIZ_PASSWORD", "VOBIZ_OUTBOUND_NUMBER", "DEFAULT_TRANSFER_NUMBER"])
+                      handleSaveGroup([
+                        "VOBIZ_SIP_DOMAIN", 
+                        "OUTBOUND_TRUNK_ID", 
+                        "INBOUND_TRUNK_ID",
+                        "SIP_DISPATCH_RULE_ID",
+                        "ENABLE_OUTBOUND",
+                        "ENABLE_INBOUND",
+                        "INBOUND_GREETING",
+                        "VOBIZ_USERNAME", 
+                        "VOBIZ_PASSWORD", 
+                        "VOBIZ_OUTBOUND_NUMBER", 
+                        "DEFAULT_TRANSFER_NUMBER"
+                      ])
                     }
                     className="rounded-lg bg-amber-400 px-5 py-2 text-xs font-bold text-slate-950 hover:scale-[1.02] cursor-pointer"
                   >
@@ -2354,7 +2497,13 @@ function SettingsPanel({ toastOk, toastErr, reloadChips }: { toastOk: (msg: stri
                     onClick={handleCreateTrunk}
                     className="rounded-lg border border-white/10 bg-white/[0.02] px-5 py-2 text-xs font-bold text-white hover:bg-white/[0.05] cursor-pointer"
                   >
-                    Generate LiveKit Outbound Trunk
+                    ⚡ Outbound Trunk
+                  </button>
+                  <button
+                    onClick={handleCreateInboundTrunk}
+                    className="rounded-lg border border-white/10 bg-white/[0.02] px-5 py-2 text-xs font-bold text-white hover:bg-white/[0.05] cursor-pointer"
+                  >
+                    ⚡ Inbound Trunk
                   </button>
                 </div>
               </div>
@@ -2481,7 +2630,13 @@ export default function Home() {
   const [stats, setStats] = useState<any>(null);
   const [agentProfiles, setAgentProfiles] = useState<any[]>([]);
   const [knowledgeBases, setKnowledgeBases] = useState<any[]>([]);
-  const [liveConfig, setLiveConfig] = useState<any>({ livekit: false, gemini: false, trunk: false });
+  const [liveConfig, setLiveConfig] = useState<any>({ 
+    livekit: false, 
+    gemini: false, 
+    trunk: false,
+    inboundEnabled: false,
+    outboundEnabled: false
+  });
   const [loadingConfig, startTransition] = useTransition();
 
   const toastOk = (msg: string) => {
@@ -2524,9 +2679,22 @@ export default function Home() {
           livekit: s.LIVEKIT_API_KEY?.configured || false,
           gemini: s.GOOGLE_API_KEY?.configured || false,
           trunk: s.OUTBOUND_TRUNK_ID?.configured || false,
+          inboundEnabled: s.ENABLE_INBOUND?.value === "true",
+          outboundEnabled: s.ENABLE_OUTBOUND?.value === "true",
         });
       } catch (e) {}
     });
+  };
+
+  const toggleSetting = async (key: string, currentValue: boolean) => {
+    const nextValue = !currentValue;
+    try {
+      await apiPost("/api/settings", { settings: { [key]: nextValue ? "true" : "false" } });
+      toastOk(`${key === "ENABLE_INBOUND" ? "Inbound" : "Outbound"} calling ${nextValue ? "enabled" : "disabled"}`);
+      loadChips();
+    } catch (e: any) {
+      toastErr(e.message);
+    }
   };
 
   useEffect(() => {
@@ -2609,8 +2777,52 @@ export default function Home() {
                   ))}
               </div>
 
+              {/* Mobile Toggles */}
+              <div className="flex gap-2 lg:hidden mt-2">
+                <button
+                  onClick={() => toggleSetting("ENABLE_INBOUND", liveConfig.inboundEnabled)}
+                  className={`flex-1 flex items-center justify-center rounded-lg border py-1.5 text-[11px] font-semibold cursor-pointer transition-colors ${
+                    liveConfig.inboundEnabled 
+                      ? "border-emerald-500/20 bg-emerald-500/10 text-emerald-300" 
+                      : "border-rose-500/20 bg-rose-500/10 text-rose-300"
+                  }`}
+                >
+                  Inbound: {liveConfig.inboundEnabled ? "ACTIVE" : "DISABLED"}
+                </button>
+                <button
+                  onClick={() => toggleSetting("ENABLE_OUTBOUND", liveConfig.outboundEnabled)}
+                  className={`flex-1 flex items-center justify-center rounded-lg border py-1.5 text-[11px] font-semibold cursor-pointer transition-colors ${
+                    liveConfig.outboundEnabled 
+                      ? "border-emerald-500/20 bg-emerald-500/10 text-emerald-300" 
+                      : "border-rose-500/20 bg-rose-500/10 text-rose-300"
+                  }`}
+                >
+                  Outbound: {liveConfig.outboundEnabled ? "ACTIVE" : "DISABLED"}
+                </button>
+              </div>
+
               {/* Header Configuration Badges */}
               <div className="hidden items-center gap-3 lg:flex">
+                <button
+                  onClick={() => toggleSetting("ENABLE_INBOUND", liveConfig.inboundEnabled)}
+                  className={`flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-semibold cursor-pointer transition-colors ${
+                    liveConfig.inboundEnabled 
+                      ? "border-emerald-500/20 bg-emerald-500/10 text-emerald-300 hover:bg-emerald-500/20" 
+                      : "border-rose-500/20 bg-rose-500/10 text-rose-300 hover:bg-rose-500/20"
+                  }`}
+                >
+                  Inbound: {liveConfig.inboundEnabled ? "ACTIVE" : "DISABLED"}
+                </button>
+                <button
+                  onClick={() => toggleSetting("ENABLE_OUTBOUND", liveConfig.outboundEnabled)}
+                  className={`flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-semibold cursor-pointer transition-colors ${
+                    liveConfig.outboundEnabled 
+                      ? "border-emerald-500/20 bg-emerald-500/10 text-emerald-300 hover:bg-emerald-500/20" 
+                      : "border-rose-500/20 bg-rose-500/10 text-rose-300 hover:bg-rose-500/20"
+                  }`}
+                >
+                  Outbound: {liveConfig.outboundEnabled ? "ACTIVE" : "DISABLED"}
+                </button>
                 <Badge tone={liveConfig.trunk ? "green" : "default"}>
                   <ShieldCheck className="mr-1.5 h-3.5 w-3.5" /> {liveConfig.trunk ? "SIP Trunk Active" : "SIP Offline"}
                 </Badge>

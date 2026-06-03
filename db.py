@@ -6,8 +6,7 @@ from typing import Optional
 from collections import defaultdict
 
 # ---------------------------------------------------------------------------
-# DEFAULTS — all loaded from environment variables only.
-# Never hardcode real credentials here. Use Coolify env vars or .env file.
+# DEFAULTS — loaded from environment variables and settings.
 # ---------------------------------------------------------------------------
 DEFAULTS = {
     "LIVEKIT_URL":             os.getenv("LIVEKIT_URL", ""),
@@ -23,18 +22,18 @@ DEFAULTS = {
     "VOBIZ_OUTBOUND_NUMBER":   os.getenv("VOBIZ_OUTBOUND_NUMBER", ""),
     "OUTBOUND_TRUNK_ID":       os.getenv("OUTBOUND_TRUNK_ID", ""),
     "DEFAULT_TRANSFER_NUMBER": os.getenv("DEFAULT_TRANSFER_NUMBER", ""),
-    "SUPABASE_URL":            os.getenv("SUPABASE_URL", ""),
-    "SUPABASE_SERVICE_KEY":    os.getenv("SUPABASE_SERVICE_KEY", ""),
     "DEEPGRAM_API_KEY":        os.getenv("DEEPGRAM_API_KEY", ""),
+    "ENABLE_INBOUND":          os.getenv("ENABLE_INBOUND", "true"),
+    "ENABLE_OUTBOUND":         os.getenv("ENABLE_OUTBOUND", "true"),
+    "MYSQL_HOST":              os.getenv("MYSQL_HOST", "localhost"),
+    "MYSQL_PORT":              os.getenv("MYSQL_PORT", "3306"),
+    "MYSQL_DATABASE":          os.getenv("MYSQL_DATABASE", "voice_ai"),
+    "MYSQL_USER":              os.getenv("MYSQL_USER", "root"),
+    "MYSQL_PASSWORD":          os.getenv("MYSQL_PASSWORD", ""),
 }
-
 
 def _default(key: str) -> str:
     return os.getenv(key, DEFAULTS.get(key, ""))
-
-
-SUPABASE_URL = _default("SUPABASE_URL")
-SUPABASE_KEY = _default("SUPABASE_SERVICE_KEY")
 
 SENSITIVE_KEYS = {
     "LIVEKIT_API_KEY", "LIVEKIT_API_SECRET", "GOOGLE_API_KEY",
@@ -43,42 +42,277 @@ SENSITIVE_KEYS = {
     "DEEPGRAM_API_KEY",
 }
 
+# ---------------------------------------------------------------------------
+# MySQL Async Connection Pool & Query Helpers
+# ---------------------------------------------------------------------------
+import asyncio
+import aiomysql
 
-def _sdb():
-    from supabase import create_client
-    return create_client(_default("SUPABASE_URL"), _default("SUPABASE_SERVICE_KEY"))
+_pools = {}
 
+async def _init_pool():
+    global _pools
+    loop = asyncio.get_running_loop()
+    # Clean up closed loops to avoid reference accumulation
+    for l in list(_pools.keys()):
+        if l.is_closed():
+            _pools.pop(l, None)
+            
+    if loop not in _pools:
+        _pools[loop] = await aiomysql.create_pool(
+            host=_default("MYSQL_HOST"),
+            port=int(_default("MYSQL_PORT")),
+            user=_default("MYSQL_USER"),
+            password=_default("MYSQL_PASSWORD"),
+            db=_default("MYSQL_DATABASE"),
+            autocommit=True,
+            cursorclass=aiomysql.DictCursor,
+            loop=loop
+        )
+    return _pools[loop]
 
-async def _adb():
-    from supabase._async.client import create_client
-    return await create_client(_default("SUPABASE_URL"), _default("SUPABASE_SERVICE_KEY"))
+async def execute_query(query: str, args: tuple = ()) -> list:
+    pool = await _init_pool()
+    async with pool.acquire() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute(query, args)
+            return await cur.fetchall()
 
+async def execute_write(query: str, args: tuple = ()) -> int:
+    pool = await _init_pool()
+    async with pool.acquire() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute(query, args)
+            return cur.rowcount
 
+# ---------------------------------------------------------------------------
+# Synchronous MySQL Schema Setup (Runs at startup)
+# ---------------------------------------------------------------------------
 def init_db() -> None:
-    url = os.getenv("SUPABASE_URL", SUPABASE_URL)
-    key = os.getenv("SUPABASE_SERVICE_KEY", SUPABASE_KEY)
-    if not url or not key:
-        print("⚠️  SUPABASE_URL or SUPABASE_SERVICE_KEY not set.")
-        return
+    import pymysql
     try:
-        db = _sdb()
-        db.table("settings").select("key").limit(1).execute()
-        print("✅ Supabase connected")
+        conn = pymysql.connect(
+            host=_default("MYSQL_HOST"),
+            port=int(_default("MYSQL_PORT")),
+            user=_default("MYSQL_USER"),
+            password=_default("MYSQL_PASSWORD"),
+            database=_default("MYSQL_DATABASE"),
+            autocommit=True
+        )
+        with conn.cursor() as cur:
+            try:
+                cur.execute("SET GLOBAL max_allowed_packet=67108864;")
+            except Exception as e:
+                print(f"⚠️  Could not set global max_allowed_packet: {e}")
+            cur.execute("""
+            CREATE TABLE IF NOT EXISTS appointments (
+                id VARCHAR(255) PRIMARY KEY,
+                name VARCHAR(255) NOT NULL,
+                phone VARCHAR(255) NOT NULL,
+                date VARCHAR(255) NOT NULL,
+                time VARCHAR(255) NOT NULL,
+                service VARCHAR(255) NOT NULL,
+                status VARCHAR(255) NOT NULL DEFAULT 'booked',
+                created_at VARCHAR(255) NOT NULL,
+                calcom_booking_uid VARCHAR(255)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+            """)
+            
+            cur.execute("""
+            CREATE TABLE IF NOT EXISTS call_logs (
+                id VARCHAR(255) PRIMARY KEY,
+                phone_number VARCHAR(255) NOT NULL,
+                lead_name VARCHAR(255),
+                outcome VARCHAR(255),
+                reason VARCHAR(255),
+                duration_seconds INT,
+                timestamp VARCHAR(255) NOT NULL,
+                recording_url TEXT,
+                notes TEXT,
+                direction VARCHAR(255) DEFAULT 'outbound',
+                transcript TEXT
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+            """)
+            try:
+                cur.execute("ALTER TABLE call_logs ADD COLUMN transcript TEXT;")
+            except Exception:
+                pass
+
+            cur.execute("""
+            CREATE TABLE IF NOT EXISTS settings (
+                `key` VARCHAR(255) PRIMARY KEY,
+                `value` TEXT NOT NULL,
+                updated_at VARCHAR(255) NOT NULL
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+            """)
+
+            cur.execute("""
+            CREATE TABLE IF NOT EXISTS error_logs (
+                id VARCHAR(255) PRIMARY KEY,
+                source VARCHAR(255) NOT NULL,
+                level VARCHAR(255) NOT NULL DEFAULT 'error',
+                message TEXT NOT NULL,
+                detail TEXT,
+                timestamp VARCHAR(255) NOT NULL
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+            """)
+
+            cur.execute("""
+            CREATE TABLE IF NOT EXISTS campaigns (
+                id VARCHAR(255) PRIMARY KEY,
+                name VARCHAR(255) NOT NULL,
+                status VARCHAR(255) NOT NULL DEFAULT 'active',
+                contacts_json TEXT NOT NULL,
+                schedule_type VARCHAR(255) NOT NULL DEFAULT 'once',
+                schedule_time VARCHAR(255) DEFAULT '09:00',
+                call_delay_seconds INT DEFAULT 3,
+                system_prompt TEXT,
+                created_at VARCHAR(255) NOT NULL,
+                last_run_at VARCHAR(255),
+                total_dispatched INT DEFAULT 0,
+                total_failed INT DEFAULT 0,
+                agent_profile_id VARCHAR(255)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+            """)
+
+            cur.execute("""
+            CREATE TABLE IF NOT EXISTS contact_memory (
+                id VARCHAR(255) PRIMARY KEY,
+                phone_number VARCHAR(255) NOT NULL,
+                insight TEXT NOT NULL,
+                created_at VARCHAR(255) NOT NULL,
+                KEY idx_contact_memory_phone (phone_number)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+            """)
+
+            cur.execute("""
+            CREATE TABLE IF NOT EXISTS agent_profiles (
+                id VARCHAR(255) PRIMARY KEY,
+                name VARCHAR(255) NOT NULL,
+                voice VARCHAR(255) NOT NULL DEFAULT 'Aoede',
+                model VARCHAR(255) NOT NULL DEFAULT 'gemini-3.1-flash-live-preview',
+                system_prompt TEXT,
+                enabled_tools TEXT,
+                is_default INT DEFAULT 0,
+                created_at VARCHAR(255) NOT NULL,
+                conversation_initiation VARCHAR(255) DEFAULT 'agent',
+                first_message TEXT,
+                channel_mode VARCHAR(255) DEFAULT 'voice',
+                voice_prompt_override TEXT,
+                text_prompt_override TEXT,
+                knowledge_confidence_threshold DOUBLE DEFAULT 0.55
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+            """)
+
+            cur.execute("""
+            CREATE TABLE IF NOT EXISTS knowledge_bases (
+                id VARCHAR(255) PRIMARY KEY,
+                name VARCHAR(255) NOT NULL,
+                description TEXT,
+                status VARCHAR(255) NOT NULL DEFAULT 'active',
+                created_at VARCHAR(255) NOT NULL,
+                updated_at VARCHAR(255) NOT NULL
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+            """)
+
+            cur.execute("""
+            CREATE TABLE IF NOT EXISTS knowledge_entries (
+                id VARCHAR(255) PRIMARY KEY,
+                knowledge_base_id VARCHAR(255) NOT NULL,
+                title VARCHAR(255) NOT NULL,
+                content TEXT NOT NULL,
+                content_type VARCHAR(255) DEFAULT 'business_info',
+                category VARCHAR(255) DEFAULT '',
+                tags TEXT,
+                status VARCHAR(255) NOT NULL DEFAULT 'active',
+                source_type VARCHAR(255) DEFAULT 'manual',
+                source_file_id VARCHAR(255),
+                created_at VARCHAR(255) NOT NULL,
+                updated_at VARCHAR(255) NOT NULL,
+                KEY idx_knowledge_entries_kb (knowledge_base_id)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+            """)
+
+            cur.execute("""
+            CREATE TABLE IF NOT EXISTS knowledge_chunks (
+                id VARCHAR(255) PRIMARY KEY,
+                knowledge_entry_id VARCHAR(255) NOT NULL,
+                knowledge_base_id VARCHAR(255) NOT NULL,
+                chunk_text TEXT NOT NULL,
+                chunk_index INT DEFAULT 0,
+                token_count INT DEFAULT 0,
+                embedding TEXT,
+                metadata TEXT,
+                created_at VARCHAR(255) NOT NULL,
+                KEY idx_knowledge_chunks_kb (knowledge_base_id),
+                KEY idx_knowledge_chunks_entry (knowledge_entry_id)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+            """)
+
+            cur.execute("""
+            CREATE TABLE IF NOT EXISTS agent_knowledge_bases (
+                id VARCHAR(255) PRIMARY KEY,
+                agent_id VARCHAR(255) NOT NULL,
+                knowledge_base_id VARCHAR(255) NOT NULL,
+                priority INT DEFAULT 0,
+                enabled INT DEFAULT 1,
+                created_at VARCHAR(255) NOT NULL,
+                KEY idx_agent_kb_agent (agent_id),
+                KEY idx_agent_kb_kb (knowledge_base_id)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+            """)
+
+            cur.execute("""
+            CREATE TABLE IF NOT EXISTS call_recordings (
+                call_id VARCHAR(255) PRIMARY KEY,
+                audio_data LONGBLOB NOT NULL,
+                filename VARCHAR(255) NOT NULL,
+                mime_type VARCHAR(255) NOT NULL,
+                created_at VARCHAR(255) NOT NULL
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+            """)
+        conn.close()
+        print("✅ MySQL connected and schema verified")
     except Exception as exc:
-        print(f"⚠️  Supabase connection failed: {exc}")
-        print("   Run supabase_schema.sql in your Supabase Dashboard → SQL Editor")
+        print(f"⚠️  MySQL connection failed: {exc}")
 
+def load_mysql_settings_to_env() -> None:
+    """Load MySQL settings table into os.environ before worker starts."""
+    import pymysql
+    try:
+        conn = pymysql.connect(
+            host=_default("MYSQL_HOST"),
+            port=int(_default("MYSQL_PORT")),
+            user=_default("MYSQL_USER"),
+            password=_default("MYSQL_PASSWORD"),
+            database=_default("MYSQL_DATABASE"),
+            autocommit=True
+        )
+        with conn.cursor() as cur:
+            cur.execute("SHOW TABLES LIKE 'settings'")
+            if cur.fetchone():
+                cur.execute("SELECT `key`, `value` FROM settings")
+                for row in cur.fetchall():
+                    key, value = row[0], row[1]
+                    if value is not None:
+                        os.environ[key] = str(value)
+        conn.close()
+        print("✅ Settings loaded from MySQL database into environment.")
+    except Exception as exc:
+        print(f"⚠️  Could not load settings from MySQL: {exc}")
 
-# ── Settings ─────────────────────────────────────────────────────────────────
-
+# ---------------------------------------------------------------------------
+# Settings CRUD
+# ---------------------------------------------------------------------------
 async def get_all_settings() -> dict:
-    db = await _adb()
-    result = await db.table("settings").select("key, value").execute()
+    rows = await execute_query("SELECT `key`, `value` FROM settings")
     KNOWN_KEYS = [
         "LIVEKIT_URL", "LIVEKIT_API_KEY", "LIVEKIT_API_SECRET",
         "GOOGLE_API_KEY", "GEMINI_MODEL", "GEMINI_TTS_VOICE", "USE_GEMINI_REALTIME",
         "VOBIZ_SIP_DOMAIN", "VOBIZ_USERNAME", "VOBIZ_PASSWORD",
-        "VOBIZ_OUTBOUND_NUMBER", "OUTBOUND_TRUNK_ID", "DEFAULT_TRANSFER_NUMBER",
+        "VOBIZ_OUTBOUND_NUMBER", "OUTBOUND_TRUNK_ID", "INBOUND_TRUNK_ID", 
+        "SIP_DISPATCH_RULE_ID", "ENABLE_INBOUND", "ENABLE_OUTBOUND", "INBOUND_GREETING",
+        "DEFAULT_TRANSFER_NUMBER",
         "DEEPGRAM_API_KEY", "TWILIO_ACCOUNT_SID", "TWILIO_AUTH_TOKEN", "TWILIO_FROM_NUMBER",
         "S3_ACCESS_KEY_ID", "S3_SECRET_ACCESS_KEY", "S3_ENDPOINT_URL", "S3_REGION", "S3_BUCKET",
         "CALCOM_API_KEY", "CALCOM_EVENT_TYPE_ID", "CALCOM_TIMEZONE",
@@ -91,7 +325,7 @@ async def get_all_settings() -> dict:
             out[k] = {"value": "", "configured": bool(env_val)}
         else:
             out[k] = {"value": env_val, "configured": bool(env_val)}
-    for row in (result.data or []):
+    for row in rows:
         k, v = row["key"], row["value"]
         if k == "TEST_KEY":
             continue
@@ -101,49 +335,44 @@ async def get_all_settings() -> dict:
             out[k] = {"value": v, "configured": bool(v)}
     return out
 
-
 async def save_settings(data: dict) -> None:
-    db = await _adb()
     updated_at = datetime.now().isoformat()
-    rows = [
-        {"key": k, "value": str(v), "updated_at": updated_at}
-        for k, v in data.items()
-        if v is not None and v != ""
-    ]
-    if rows:
-        await db.table("settings").upsert(rows, on_conflict="key").execute()
-
+    for k, v in data.items():
+        if v is not None and v != "":
+            await execute_write(
+                "INSERT INTO settings (`key`, `value`, `updated_at`) VALUES (%s, %s, %s) "
+                "ON DUPLICATE KEY UPDATE `value`=%s, `updated_at`=%s",
+                (k, str(v), updated_at, str(v), updated_at)
+            )
 
 async def get_setting(key: str, default: str = "") -> str:
-    db = await _adb()
-    result = await db.table("settings").select("value").eq("key", key).maybe_single().execute()
-    if result and result.data:
-        return result.data["value"]
+    rows = await execute_query("SELECT `value` FROM settings WHERE `key`=%s", (key,))
+    if rows:
+        return rows[0]["value"]
     return _default(key) or default
 
-
 async def set_setting(key: str, value: str) -> None:
-    db = await _adb()
-    await db.table("settings").upsert(
-        {"key": key, "value": value, "updated_at": datetime.now().isoformat()},
-        on_conflict="key",
-    ).execute()
-
+    updated_at = datetime.now().isoformat()
+    await execute_write(
+        "INSERT INTO settings (`key`, `value`, `updated_at`) VALUES (%s, %s, %s) "
+        "ON DUPLICATE KEY UPDATE `value`=%s, `updated_at`=%s",
+        (key, value, updated_at, value, updated_at)
+    )
 
 async def get_enabled_tools() -> list:
     raw = await get_setting("ENABLED_TOOLS", "")
     if not raw:
         return []
     try:
-        import json
         result = json.loads(raw)
         return result if isinstance(result, list) else []
     except Exception:
         return []
 
-
+# ---------------------------------------------------------------------------
+# Text Chunking Helpers
+# ---------------------------------------------------------------------------
 def chunk_text(text: str, max_chars: int = 900) -> list:
-    """Split business knowledge into small searchable chunks."""
     clean = " ".join((text or "").split())
     if not clean:
         return []
@@ -159,7 +388,6 @@ def chunk_text(text: str, max_chars: int = 900) -> list:
         start = end
     return [c for c in chunks if c]
 
-
 def _score_text(query: str, text: str) -> float:
     q_terms = {t.lower().strip(".,!?;:()[]{}") for t in query.split() if len(t.strip()) > 2}
     if not q_terms:
@@ -168,53 +396,53 @@ def _score_text(query: str, text: str) -> float:
     hits = sum(1 for term in q_terms if term in haystack)
     return round(hits / max(len(q_terms), 1), 3)
 
-
-# ── Knowledge Base ────────────────────────────────────────────────────────────
-
+# ---------------------------------------------------------------------------
+# Knowledge Base CRUD
+# ---------------------------------------------------------------------------
 async def get_knowledge_bases() -> list:
-    db = await _adb()
-    result = await db.table("knowledge_bases").select("*").order("created_at", desc=True).execute()
-    return result.data or []
-
+    return await execute_query("SELECT * FROM knowledge_bases ORDER BY created_at DESC")
 
 async def get_knowledge_base(kb_id: str) -> Optional[dict]:
-    db = await _adb()
-    result = await db.table("knowledge_bases").select("*").eq("id", kb_id).maybe_single().execute()
-    return result.data if result else None
-
+    rows = await execute_query("SELECT * FROM knowledge_bases WHERE id=%s", (kb_id,))
+    return rows[0] if rows else None
 
 async def create_knowledge_base(name: str, description: str = "") -> str:
     kb_id = str(uuid.uuid4())
-    db = await _adb()
-    await db.table("knowledge_bases").insert({
-        "id": kb_id, "name": name, "description": description,
-        "status": "active", "created_at": datetime.now().isoformat(),
-        "updated_at": datetime.now().isoformat(),
-    }).execute()
+    now = datetime.now().isoformat()
+    await execute_write(
+        "INSERT INTO knowledge_bases (id, name, description, status, created_at, updated_at) VALUES (%s, %s, %s, %s, %s, %s)",
+        (kb_id, name, description, "active", now, now)
+    )
     return kb_id
 
-
 async def update_knowledge_base(kb_id: str, updates: dict) -> bool:
-    db = await _adb()
     updates["updated_at"] = datetime.now().isoformat()
-    result = await db.table("knowledge_bases").update(updates).eq("id", kb_id).execute()
-    return len(result.data or []) > 0
-
+    fields = []
+    args = []
+    for k, v in updates.items():
+        fields.append(f"`{k}`=%s")
+        args.append(v)
+    args.append(kb_id)
+    query = f"UPDATE knowledge_bases SET {', '.join(fields)} WHERE id=%s"
+    affected = await execute_write(query, tuple(args))
+    return affected > 0
 
 async def delete_knowledge_base(kb_id: str) -> bool:
-    db = await _adb()
-    await db.table("agent_knowledge_bases").delete().eq("knowledge_base_id", kb_id).execute()
-    await db.table("knowledge_chunks").delete().eq("knowledge_base_id", kb_id).execute()
-    await db.table("knowledge_entries").delete().eq("knowledge_base_id", kb_id).execute()
-    result = await db.table("knowledge_bases").delete().eq("id", kb_id).execute()
-    return len(result.data or []) > 0
-
+    await execute_write("DELETE FROM agent_knowledge_bases WHERE knowledge_base_id=%s", (kb_id,))
+    await execute_write("DELETE FROM knowledge_chunks WHERE knowledge_base_id=%s", (kb_id,))
+    await execute_write("DELETE FROM knowledge_entries WHERE knowledge_base_id=%s", (kb_id,))
+    affected = await execute_write("DELETE FROM knowledge_bases WHERE id=%s", (kb_id,))
+    return affected > 0
 
 async def get_knowledge_entries(kb_id: str) -> list:
-    db = await _adb()
-    result = await db.table("knowledge_entries").select("*").eq("knowledge_base_id", kb_id).order("updated_at", desc=True).execute()
-    return result.data or []
-
+    rows = await execute_query("SELECT * FROM knowledge_entries WHERE knowledge_base_id=%s ORDER BY updated_at DESC", (kb_id,))
+    for r in rows:
+        if r.get("tags"):
+            try:
+                r["tags"] = json.loads(r["tags"])
+            except Exception:
+                r["tags"] = []
+    return rows
 
 async def create_knowledge_entry(
     knowledge_base_id: str, title: str, content: str,
@@ -222,52 +450,36 @@ async def create_knowledge_entry(
 ) -> str:
     entry_id = str(uuid.uuid4())
     now = datetime.now().isoformat()
-    db = await _adb()
     tag_data = tags or []
-    await db.table("knowledge_entries").insert({
-        "id": entry_id, "knowledge_base_id": knowledge_base_id, "title": title,
-        "content": content, "content_type": content_type, "category": category,
-        "tags": json.dumps(tag_data), "status": "active", "source_type": "manual",
-        "created_at": now, "updated_at": now,
-    }).execute()
-    rows = []
+    await execute_write(
+        "INSERT INTO knowledge_entries (id, knowledge_base_id, title, content, content_type, category, tags, status, source_type, created_at, updated_at) "
+        "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
+        (entry_id, knowledge_base_id, title, content, content_type, category, json.dumps(tag_data), "active", "manual", now, now)
+    )
     for idx, chunk in enumerate(chunk_text(content)):
-        rows.append({
-            "id": str(uuid.uuid4()), "knowledge_entry_id": entry_id,
-            "knowledge_base_id": knowledge_base_id, "chunk_text": chunk,
-            "chunk_index": idx, "token_count": max(1, len(chunk) // 4),
-            "metadata": json.dumps({"title": title, "category": category, "tags": tag_data, "content_type": content_type}),
-            "created_at": now,
-        })
-    if rows:
-        await db.table("knowledge_chunks").insert(rows).execute()
+        await execute_write(
+            "INSERT INTO knowledge_chunks (id, knowledge_entry_id, knowledge_base_id, chunk_text, chunk_index, token_count, metadata, created_at) "
+            "VALUES (%s, %s, %s, %s, %s, %s, %s, %s)",
+            (str(uuid.uuid4()), entry_id, knowledge_base_id, chunk, idx, max(1, len(chunk) // 4), json.dumps({"title": title, "category": category, "tags": tag_data, "content_type": content_type}), now)
+        )
     await update_knowledge_base(knowledge_base_id, {})
     return entry_id
 
-
 async def delete_knowledge_entry(entry_id: str) -> bool:
-    db = await _adb()
-    await db.table("knowledge_chunks").delete().eq("knowledge_entry_id", entry_id).execute()
-    result = await db.table("knowledge_entries").delete().eq("id", entry_id).execute()
-    return len(result.data or []) > 0
-
+    await execute_write("DELETE FROM knowledge_chunks WHERE knowledge_entry_id=%s", (entry_id,))
+    affected = await execute_write("DELETE FROM knowledge_entries WHERE id=%s", (entry_id,))
+    return affected > 0
 
 async def get_agent_knowledge_bases(agent_id: str) -> list:
-    db = await _adb()
-    result = await db.table("agent_knowledge_bases").select("*").eq("agent_id", agent_id).eq("enabled", 1).order("priority").execute()
-    return result.data or []
-
+    return await execute_query("SELECT * FROM agent_knowledge_bases WHERE agent_id=%s AND enabled=1 ORDER BY priority", (agent_id,))
 
 async def set_agent_knowledge_bases(agent_id: str, knowledge_base_ids: list) -> None:
-    db = await _adb()
-    await db.table("agent_knowledge_bases").delete().eq("agent_id", agent_id).execute()
-    rows = [
-        {"id": str(uuid.uuid4()), "agent_id": agent_id, "knowledge_base_id": kb_id, "priority": i, "enabled": 1, "created_at": datetime.now().isoformat()}
-        for i, kb_id in enumerate(knowledge_base_ids or [])
-    ]
-    if rows:
-        await db.table("agent_knowledge_bases").insert(rows).execute()
-
+    await execute_write("DELETE FROM agent_knowledge_bases WHERE agent_id=%s", (agent_id,))
+    for i, kb_id in enumerate(knowledge_base_ids or []):
+        await execute_write(
+            "INSERT INTO agent_knowledge_bases (id, agent_id, knowledge_base_id, priority, enabled, created_at) VALUES (%s, %s, %s, %s, %s, %s)",
+            (str(uuid.uuid4()), agent_id, kb_id, i, 1, datetime.now().isoformat())
+        )
 
 async def search_knowledge(query: str, knowledge_base_ids: Optional[list] = None, agent_id: Optional[str] = None, limit: int = 5) -> dict:
     if agent_id and not knowledge_base_ids:
@@ -275,11 +487,14 @@ async def search_knowledge(query: str, knowledge_base_ids: Optional[list] = None
     knowledge_base_ids = knowledge_base_ids or []
     if not query or not knowledge_base_ids:
         return {"chunks": [], "confidence": 0.0, "source": "none"}
-
-    db = await _adb()
-    result = await db.table("knowledge_chunks").select("*").in_("knowledge_base_id", knowledge_base_ids).limit(500).execute()
+    
+    in_placeholders = ", ".join(["%s"] * len(knowledge_base_ids))
+    rows = await execute_query(
+        f"SELECT * FROM knowledge_chunks WHERE knowledge_base_id IN ({in_placeholders})",
+        tuple(knowledge_base_ids)
+    )
     scored = []
-    for row in (result.data or []):
+    for row in rows:
         metadata = row.get("metadata") or "{}"
         try:
             meta = json.loads(metadata) if isinstance(metadata, str) else metadata
@@ -295,70 +510,55 @@ async def search_knowledge(query: str, knowledge_base_ids: Optional[list] = None
     confidence = top[0]["score"] if top else 0.0
     return {"chunks": top, "confidence": confidence, "source": "retrieved_knowledge" if top else "none"}
 
-
-# ── Error logs ────────────────────────────────────────────────────────────────
-
+# ---------------------------------------------------------------------------
+# Error Logs CRUD
+# ---------------------------------------------------------------------------
 async def log_error(source: str, message: str, detail: str = "", level: str = "error") -> None:
     try:
-        db = await _adb()
-        await db.table("error_logs").insert({
-            "id": str(uuid.uuid4()),
-            "source": source,
-            "level": level,
-            "message": message[:500],
-            "detail": detail[:2000],
-            "timestamp": datetime.now().isoformat(),
-        }).execute()
+        await execute_write(
+            "INSERT INTO error_logs (id, source, level, message, detail, timestamp) VALUES (%s, %s, %s, %s, %s, %s)",
+            (str(uuid.uuid4()), source, level, message[:500], detail[:2000], datetime.now().isoformat())
+        )
     except Exception:
         pass
 
-
 async def get_errors(limit: int = 100) -> list:
-    db = await _adb()
-    result = await db.table("error_logs").select("*").order("timestamp", desc=True).limit(limit).execute()
-    return result.data or []
-
+    return await execute_query("SELECT * FROM error_logs ORDER BY timestamp DESC LIMIT %s", (limit,))
 
 async def get_logs(level: Optional[str] = None, source: Optional[str] = None, limit: int = 200) -> list:
-    db = await _adb()
-    query = db.table("error_logs").select("*").order("timestamp", desc=True).limit(limit)
+    query = "SELECT * FROM error_logs"
+    conditions = []
+    args = []
     if level:
-        query = query.eq("level", level)
+        conditions.append("level = %s")
+        args.append(level)
     if source:
-        query = query.eq("source", source)
-    result = await query.execute()
-    return result.data or []
-
+        conditions.append("source = %s")
+        args.append(source)
+    if conditions:
+        query += " WHERE " + " AND ".join(conditions)
+    query += " ORDER BY timestamp DESC LIMIT %s"
+    args.append(limit)
+    return await execute_query(query, tuple(args))
 
 async def clear_errors() -> None:
-    db = await _adb()
-    await db.table("error_logs").delete().neq("id", "").execute()
+    await execute_write("DELETE FROM error_logs WHERE id != ''")
 
-
-# ── Appointments ──────────────────────────────────────────────────────────────
-
+# ---------------------------------------------------------------------------
+# Appointments CRUD
+# ---------------------------------------------------------------------------
 async def insert_appointment(name: str, phone: str, date: str, time: str, service: str) -> str:
     full_id = str(uuid.uuid4())
     booking_id = full_id[:8].upper()
-    db = await _adb()
-    await db.table("appointments").insert({
-        "id": full_id, "name": name, "phone": phone,
-        "date": date, "time": time, "service": service,
-        "status": "booked", "created_at": datetime.now().isoformat(),
-    }).execute()
+    await execute_write(
+        "INSERT INTO appointments (id, name, phone, date, time, service, status, created_at) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)",
+        (full_id, name, phone, date, time, service, "booked", datetime.now().isoformat())
+    )
     return booking_id
 
-
 async def check_slot(date: str, time: str) -> bool:
-    """Returns True if slot is available (no existing booking)."""
-    db = await _adb()
-    result = await (
-        db.table("appointments").select("id")
-        .eq("date", date).eq("time", time).eq("status", "booked")
-        .maybe_single().execute()
-    )
-    return result.data is None
-
+    rows = await execute_query("SELECT id FROM appointments WHERE date=%s AND time=%s AND status='booked'", (date, time))
+    return len(rows) == 0
 
 async def get_next_available(date: str, time: str) -> str:
     try:
@@ -372,73 +572,71 @@ async def get_next_available(date: str, time: str) -> str:
                 return f"{dt.strftime('%Y-%m-%d')} at {dt.strftime('%H:%M')}"
     return "no open slots found in the next 7 days"
 
-
 async def get_all_appointments(date_filter: Optional[str] = None) -> list:
-    db = await _adb()
-    query = db.table("appointments").select("*").order("date").order("time")
     if date_filter:
-        query = query.eq("date", date_filter)
-    result = await query.execute()
-    return result.data or []
-
+        return await execute_query("SELECT * FROM appointments WHERE date=%s ORDER BY date, time", (date_filter,))
+    return await execute_query("SELECT * FROM appointments ORDER BY date, time")
 
 async def cancel_appointment(appointment_id: str) -> bool:
-    db = await _adb()
-    result = await (
-        db.table("appointments").update({"status": "cancelled"})
-        .eq("id", appointment_id).eq("status", "booked").execute()
+    affected = await execute_write(
+        "UPDATE appointments SET status='cancelled' WHERE id=%s AND status='booked'",
+        (appointment_id,)
     )
-    return len(result.data or []) > 0
-
+    return affected > 0
 
 async def get_appointments_by_phone(phone: str) -> list:
-    db = await _adb()
-    result = await db.table("appointments").select("*").eq("phone", phone).order("date", desc=True).execute()
-    return result.data or []
+    return await execute_query("SELECT * FROM appointments WHERE phone=%s ORDER BY date DESC", (phone,))
 
-
-# ── Call logs ─────────────────────────────────────────────────────────────────
-
+# ---------------------------------------------------------------------------
+# Call Logs CRUD
+# ---------------------------------------------------------------------------
 async def log_call(
     phone_number: str, lead_name: Optional[str], outcome: str, reason: str,
     duration_seconds: int, recording_url: Optional[str] = None, notes: Optional[str] = None,
+    direction: str = "outbound", call_id: Optional[str] = None,
 ) -> None:
-    db = await _adb()
     row: dict = {
-        "id": str(uuid.uuid4()), "phone_number": phone_number, "lead_name": lead_name,
+        "id": call_id or str(uuid.uuid4()), "phone_number": phone_number, "lead_name": lead_name,
         "outcome": outcome, "reason": reason, "duration_seconds": duration_seconds,
-        "timestamp": datetime.now().isoformat(),
+        "timestamp": datetime.now().isoformat(), "recording_url": recording_url,
+        "notes": notes, "direction": direction,
     }
-    if recording_url:
-        row["recording_url"] = recording_url
-    if notes:
-        row["notes"] = notes
-    await db.table("call_logs").insert(row).execute()
+    await execute_write(
+        "INSERT INTO call_logs (id, phone_number, lead_name, outcome, reason, duration_seconds, timestamp, recording_url, notes, direction) "
+        "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
+        (row["id"], row["phone_number"], row["lead_name"], row["outcome"], row["reason"], row["duration_seconds"], row["timestamp"], row["recording_url"], row["notes"], row["direction"])
+    )
 
+async def save_call_recording(call_id: str, audio_data: bytes, filename: str, mime_type: str) -> None:
+    now = datetime.now().isoformat()
+    await execute_write(
+        "INSERT INTO call_recordings (call_id, audio_data, filename, mime_type, created_at) "
+        "VALUES (%s, %s, %s, %s, %s) ON DUPLICATE KEY UPDATE audio_data=%s, filename=%s, mime_type=%s",
+        (call_id, audio_data, filename, mime_type, now, audio_data, filename, mime_type)
+    )
+    rec_url = f"/api/calls/{call_id}/recording"
+    await execute_write("UPDATE call_logs SET recording_url=%s WHERE id=%s", (rec_url, call_id))
+
+async def save_call_transcript(call_id: str, transcript: str) -> None:
+    await execute_write("UPDATE call_logs SET transcript=%s WHERE id=%s", (transcript, call_id))
+
+async def get_call_recording(call_id: str) -> Optional[dict]:
+    rows = await execute_query("SELECT * FROM call_recordings WHERE call_id=%s", (call_id,))
+    return rows[0] if rows else None
 
 async def get_all_calls(page: int = 1, limit: int = 20) -> list:
-    db = await _adb()
     offset = (page - 1) * limit
-    result = await db.table("call_logs").select("*").order("timestamp", desc=True).range(offset, offset + limit - 1).execute()
-    return result.data or []
-
+    return await execute_query("SELECT * FROM call_logs ORDER BY timestamp DESC LIMIT %s OFFSET %s", (limit, offset))
 
 async def get_calls_by_phone(phone: str) -> list:
-    db = await _adb()
-    result = await db.table("call_logs").select("*").eq("phone_number", phone).order("timestamp", desc=True).execute()
-    return result.data or []
-
+    return await execute_query("SELECT * FROM call_logs WHERE phone_number=%s ORDER BY timestamp DESC", (phone,))
 
 async def update_call_notes(call_id: str, notes: str) -> bool:
-    db = await _adb()
-    result = await db.table("call_logs").update({"notes": notes}).eq("id", call_id).execute()
-    return len(result.data or []) > 0
-
+    affected = await execute_write("UPDATE call_logs SET notes=%s WHERE id=%s", (notes, call_id))
+    return affected > 0
 
 async def get_contacts() -> list:
-    db = await _adb()
-    result = await db.table("call_logs").select("*").order("timestamp", desc=True).execute()
-    rows = result.data or []
+    rows = await execute_query("SELECT * FROM call_logs ORDER BY timestamp DESC")
     contacts: dict = {}
     for row in rows:
         phone = row["phone_number"]
@@ -453,24 +651,21 @@ async def get_contacts() -> list:
             contacts[phone]["booked"] += 1
     return sorted(contacts.values(), key=lambda c: c["last_call"], reverse=True)
 
-
-# ── Stats ─────────────────────────────────────────────────────────────────────
-
 async def get_stats() -> dict:
-    db = await _adb()
-    rows = (await db.table("call_logs").select("outcome, duration_seconds, timestamp").execute()).data or []
+    rows = await execute_query("SELECT outcome, duration_seconds, timestamp, direction FROM call_logs")
     total_calls    = len(rows)
     booked         = sum(1 for r in rows if r.get("outcome") == "booked")
     not_interested = sum(1 for r in rows if r.get("outcome") == "not_interested")
+    inbound_calls  = sum(1 for r in rows if r.get("direction") == "inbound")
+    outbound_calls = sum(1 for r in rows if r.get("direction") == "outbound" or not r.get("direction"))
+    
     durations      = [r["duration_seconds"] for r in rows if r.get("duration_seconds")]
     avg_dur        = sum(durations) / len(durations) if durations else 0
     booking_rate   = round((booked / total_calls * 100) if total_calls else 0, 1)
-    # Outcomes breakdown
     outcomes: dict = {}
     for r in rows:
         o = r.get("outcome") or "unknown"
         outcomes[o] = outcomes.get(o, 0) + 1
-    # Timeline: calls per day last 14 days
     daily: dict = defaultdict(int)
     for r in rows:
         ts = (r.get("timestamp") or "")[:10]
@@ -478,7 +673,6 @@ async def get_stats() -> dict:
             daily[ts] += 1
     today = datetime.now().date()
     timeline = [{"date": (today - timedelta(days=i)).isoformat(), "count": daily.get((today - timedelta(days=i)).isoformat(), 0)} for i in range(13, -1, -1)]
-    # Avg duration by outcome
     dur_sum: dict = defaultdict(float)
     dur_cnt: dict = defaultdict(int)
     for r in rows:
@@ -491,106 +685,75 @@ async def get_stats() -> dict:
     return {
         "total_calls": total_calls, "booked": booked, "not_interested": not_interested,
         "avg_duration_seconds": round(avg_dur, 1), "booking_rate_percent": booking_rate,
+        "inbound_calls": inbound_calls, "outbound_calls": outbound_calls,
         "outcomes": outcomes, "timeline": timeline, "duration_by_outcome": duration_by_outcome,
     }
 
-
-# ── Campaigns ─────────────────────────────────────────────────────────────────
-
+# ---------------------------------------------------------------------------
+# Campaigns CRUD
+# ---------------------------------------------------------------------------
 async def create_campaign(
     name: str, contacts_json: str, schedule_type: str = "once",
     schedule_time: str = "09:00", call_delay_seconds: int = 3,
     system_prompt: Optional[str] = None, agent_profile_id: Optional[str] = None,
 ) -> str:
     campaign_id = str(uuid.uuid4())
-    db = await _adb()
-    row: dict = {
-        "id": campaign_id, "name": name, "status": "active",
-        "contacts_json": contacts_json, "schedule_type": schedule_type,
-        "schedule_time": schedule_time, "call_delay_seconds": call_delay_seconds,
-        "created_at": datetime.now().isoformat(), "total_dispatched": 0, "total_failed": 0,
-    }
-    if system_prompt:
-        row["system_prompt"] = system_prompt
-    if agent_profile_id:
-        row["agent_profile_id"] = agent_profile_id
-    await db.table("campaigns").insert(row).execute()
+    await execute_write(
+        "INSERT INTO campaigns (id, name, status, contacts_json, schedule_type, schedule_time, call_delay_seconds, system_prompt, agent_profile_id, created_at, total_dispatched, total_failed) "
+        "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
+        (campaign_id, name, "active", contacts_json, schedule_type, schedule_time, call_delay_seconds, system_prompt, agent_profile_id, datetime.now().isoformat(), 0, 0)
+    )
     return campaign_id
 
-
 async def get_all_campaigns() -> list:
-    db = await _adb()
-    result = await db.table("campaigns").select("*").order("created_at", desc=True).execute()
-    return result.data or []
-
+    return await execute_query("SELECT * FROM campaigns ORDER BY created_at DESC")
 
 async def get_campaign(campaign_id: str) -> Optional[dict]:
-    db = await _adb()
-    result = await db.table("campaigns").select("*").eq("id", campaign_id).maybe_single().execute()
-    return result.data if result else None
-
+    rows = await execute_query("SELECT * FROM campaigns WHERE id=%s", (campaign_id,))
+    return rows[0] if rows else None
 
 async def update_campaign_status(campaign_id: str, status: str) -> bool:
-    db = await _adb()
-    result = await db.table("campaigns").update({"status": status}).eq("id", campaign_id).execute()
-    return len(result.data or []) > 0
-
+    affected = await execute_write("UPDATE campaigns SET status=%s WHERE id=%s", (status, campaign_id))
+    return affected > 0
 
 async def update_campaign_run_stats(campaign_id: str, dispatched: int, failed: int) -> None:
-    db = await _adb()
-    await db.table("campaigns").update({
-        "last_run_at": datetime.now().isoformat(),
-        "total_dispatched": dispatched, "total_failed": failed, "status": "completed",
-    }).eq("id", campaign_id).execute()
-
+    await execute_write(
+        "UPDATE campaigns SET last_run_at=%s, total_dispatched=%s, total_failed=%s, status='completed' WHERE id=%s",
+        (datetime.now().isoformat(), dispatched, failed, campaign_id)
+    )
 
 async def delete_campaign(campaign_id: str) -> bool:
-    db = await _adb()
-    result = await db.table("campaigns").delete().eq("id", campaign_id).execute()
-    return len(result.data or []) > 0
+    affected = await execute_write("DELETE FROM campaigns WHERE id=%s", (campaign_id,))
+    return affected > 0
 
-
-# ── Contact Memory ────────────────────────────────────────────────────────────
-
+# ---------------------------------------------------------------------------
+# Contact Memory CRUD
+# ---------------------------------------------------------------------------
 async def add_contact_memory(phone: str, insight: str) -> None:
-    db = await _adb()
-    await db.table("contact_memory").insert({
-        "id": str(uuid.uuid4()), "phone_number": phone,
-        "insight": insight[:1000], "created_at": datetime.now().isoformat(),
-    }).execute()
-
+    await execute_write(
+        "INSERT INTO contact_memory (id, phone_number, insight, created_at) VALUES (%s, %s, %s, %s)",
+        (str(uuid.uuid4()), phone, insight[:1000], datetime.now().isoformat())
+    )
 
 async def get_contact_memory(phone: str) -> list:
-    db = await _adb()
-    result = await (
-        db.table("contact_memory").select("insight, created_at")
-        .eq("phone_number", phone).order("created_at", desc=True).limit(20).execute()
-    )
-    return result.data or []
-
+    return await execute_query("SELECT insight, created_at FROM contact_memory WHERE phone_number=%s ORDER BY created_at DESC LIMIT 20", (phone,))
 
 async def compress_contact_memory(phone: str, compressed: str) -> None:
-    db = await _adb()
-    await db.table("contact_memory").delete().eq("phone_number", phone).execute()
-    await db.table("contact_memory").insert({
-        "id": str(uuid.uuid4()), "phone_number": phone,
-        "insight": compressed[:2000], "created_at": datetime.now().isoformat(),
-    }).execute()
+    await execute_write("DELETE FROM contact_memory WHERE phone_number=%s", (phone,))
+    await execute_write(
+        "INSERT INTO contact_memory (id, phone_number, insight, created_at) VALUES (%s, %s, %s, %s)",
+        (str(uuid.uuid4()), phone, compressed[:2000], datetime.now().isoformat())
+    )
 
-
-# ── Agent Profiles ────────────────────────────────────────────────────────────
-
+# ---------------------------------------------------------------------------
+# Agent Profiles CRUD
+# ---------------------------------------------------------------------------
 async def get_all_agent_profiles() -> list:
-    db = await _adb()
-    result = await db.table("agent_profiles").select("*").order("created_at").execute()
-    return result.data or []
-
+    return await execute_query("SELECT * FROM agent_profiles ORDER BY created_at")
 
 async def get_agent_profile(profile_id: str) -> Optional[dict]:
-    db = await _adb()
-    result = await db.table("agent_profiles").select("*").eq("id", profile_id).maybe_single().execute()
-    return result.data if result else None
-
+    rows = await execute_query("SELECT * FROM agent_profiles WHERE id=%s", (profile_id,))
+    return rows[0] if rows else None
 
 async def create_agent_profile(
     name: str, voice: str = "Aoede", model: str = "gemini-3.1-flash-live-preview",
@@ -600,36 +763,32 @@ async def create_agent_profile(
     text_prompt_override: Optional[str] = None, knowledge_confidence_threshold: float = 0.55,
 ) -> str:
     profile_id = str(uuid.uuid4())
-    db = await _adb()
     if is_default:
-        await db.table("agent_profiles").update({"is_default": 0}).neq("id", "placeholder").execute()
-    await db.table("agent_profiles").insert({
-        "id": profile_id, "name": name, "voice": voice, "model": model,
-        "system_prompt": system_prompt, "enabled_tools": enabled_tools,
-        "is_default": 1 if is_default else 0, "created_at": datetime.now().isoformat(),
-        "conversation_initiation": conversation_initiation,
-        "first_message": first_message,
-        "channel_mode": channel_mode,
-        "voice_prompt_override": voice_prompt_override,
-        "text_prompt_override": text_prompt_override,
-        "knowledge_confidence_threshold": knowledge_confidence_threshold,
-    }).execute()
+        await execute_write("UPDATE agent_profiles SET is_default=0 WHERE id != 'placeholder'")
+    await execute_write(
+        "INSERT INTO agent_profiles (id, name, voice, model, system_prompt, enabled_tools, is_default, created_at, conversation_initiation, first_message, channel_mode, voice_prompt_override, text_prompt_override, knowledge_confidence_threshold) "
+        "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
+        (profile_id, name, voice, model, system_prompt, enabled_tools, 1 if is_default else 0, datetime.now().isoformat(), conversation_initiation, first_message, channel_mode, voice_prompt_override, text_prompt_override, knowledge_confidence_threshold)
+    )
     return profile_id
 
-
 async def update_agent_profile(profile_id: str, updates: dict) -> bool:
-    db = await _adb()
-    result = await db.table("agent_profiles").update(updates).eq("id", profile_id).execute()
-    return len(result.data or []) > 0
-
+    if updates.get("is_default") == 1:
+        await execute_write("UPDATE agent_profiles SET is_default=0 WHERE id != 'placeholder'")
+    fields = []
+    args = []
+    for k, v in updates.items():
+        fields.append(f"`{k}`=%s")
+        args.append(v)
+    args.append(profile_id)
+    query = f"UPDATE agent_profiles SET {', '.join(fields)} WHERE id=%s"
+    affected = await execute_write(query, tuple(args))
+    return affected > 0
 
 async def delete_agent_profile(profile_id: str) -> bool:
-    db = await _adb()
-    result = await db.table("agent_profiles").delete().eq("id", profile_id).execute()
-    return len(result.data or []) > 0
-
+    affected = await execute_write("DELETE FROM agent_profiles WHERE id=%s", (profile_id,))
+    return affected > 0
 
 async def set_default_agent_profile(profile_id: str) -> None:
-    db = await _adb()
-    await db.table("agent_profiles").update({"is_default": 0}).neq("id", "placeholder").execute()
-    await db.table("agent_profiles").update({"is_default": 1}).eq("id", profile_id).execute()
+    await execute_write("UPDATE agent_profiles SET is_default=0 WHERE id != 'placeholder'")
+    await execute_write("UPDATE agent_profiles SET is_default=1 WHERE id=%s", (profile_id,))

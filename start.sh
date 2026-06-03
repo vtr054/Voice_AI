@@ -14,7 +14,7 @@ PORT=${PORT:-3000}
 echo "📋 Configuration:"
 echo "   LiveKit: ${LIVEKIT_URL}"
 echo "   Gemini: ${GEMINI_MODEL:-gemini-3.1-flash-live-preview}"
-echo "   Supabase: ${SUPABASE_URL}"
+echo "   MySQL Host: ${MYSQL_HOST:-localhost}"
 echo "   Backend Port: ${BACKEND_PORT}"
 echo "   Frontend Port: ${PORT}"
 

@@ -13,7 +13,7 @@ from typing import Optional
 from contextlib import asynccontextmanager
 
 from dotenv import load_dotenv
-from fastapi import FastAPI, HTTPException, Query, Request
+from fastapi import FastAPI, HTTPException, Query, Request, Response
 from fastapi.responses import HTMLResponse, JSONResponse
 from pydantic import BaseModel
 
@@ -34,7 +34,7 @@ from db import (
     delete_campaign, get_knowledge_bases, get_knowledge_base, create_knowledge_base,
     update_knowledge_base, delete_knowledge_base, get_knowledge_entries,
     create_knowledge_entry, delete_knowledge_entry, set_agent_knowledge_bases,
-    get_agent_knowledge_bases, search_knowledge,
+    get_agent_knowledge_bases, search_knowledge, get_call_recording,
 )
 from prompts import DEFAULT_SYSTEM_PROMPT, build_prompt
 
@@ -145,20 +145,21 @@ class StatusRequest(BaseModel):
     status: str
 
 
-# ── Dashboard ─────────────────────────────────────────────────────────────────
+# ── Root API Status ───────────────────────────────────────────────────────────
 
-@app.get("/", response_class=HTMLResponse)
-async def serve_dashboard():
-    html_path = Path(__file__).parent / "ui" / "index.html"
-    if html_path.exists():
-        return HTMLResponse(content=html_path.read_text(encoding="utf-8"))
-    return HTMLResponse("<h1>Dashboard not found — place index.html in ui/</h1>", status_code=404)
+@app.get("/")
+async def api_status():
+    return {"status": "healthy", "service": "Voice AI Calling Backend"}
 
 
 # ── Call dispatch ─────────────────────────────────────────────────────────────
 
 @app.post("/api/call")
 async def api_dispatch_call(req: CallRequest):
+    enable_outbound = await get_setting("ENABLE_OUTBOUND", "true")
+    if enable_outbound.lower() == "false":
+        raise HTTPException(400, "Outbound calling is currently disabled.")
+
     url    = await eff("LIVEKIT_URL")
     key    = await eff("LIVEKIT_API_KEY")
     secret = await eff("LIVEKIT_API_SECRET")
@@ -240,6 +241,21 @@ async def api_dispatch_call(req: CallRequest):
 @app.get("/api/calls")
 async def api_get_calls(page: int = 1, limit: int = 20):
     return await get_all_calls(page=page, limit=limit)
+
+
+@app.get("/api/calls/{call_id}/recording")
+async def api_get_recording(call_id: str):
+    rec = await get_call_recording(call_id)
+    if not rec:
+        raise HTTPException(404, "Recording not found")
+    return Response(
+        content=rec["audio_data"],
+        media_type=rec["mime_type"],
+        headers={
+            "Content-Disposition": f"inline; filename={rec['filename']}",
+            "Cache-Control": "max-age=31536000"
+        }
+    )
 
 
 @app.patch("/api/calls/{call_id}/notes")
@@ -458,6 +474,77 @@ async def api_setup_trunk():
         raise HTTPException(500, f"Trunk creation failed: {exc}")
 
 
+@app.post("/api/setup/inbound-trunk")
+async def api_setup_inbound_trunk():
+    url    = await eff("LIVEKIT_URL")
+    key    = await eff("LIVEKIT_API_KEY")
+    secret = await eff("LIVEKIT_API_SECRET")
+    sip_domain = await eff("VOBIZ_SIP_DOMAIN")
+    username   = await eff("VOBIZ_USERNAME")
+    password   = await eff("VOBIZ_PASSWORD")
+    phone      = await eff("VOBIZ_OUTBOUND_NUMBER")
+
+    if not all([url, key, secret, sip_domain, username, password, phone]):
+        raise HTTPException(400, "Configure LiveKit and Vobiz credentials in Settings first.")
+
+    try:
+        from livekit import api as lk_api
+        ctx = ssl.create_default_context()
+        ctx.check_hostname = False
+        ctx.verify_mode = ssl.CERT_NONE
+        session = aiohttp.ClientSession(connector=aiohttp.TCPConnector(ssl=ctx))
+        lk = lk_api.LiveKitAPI(url=url, api_key=key, api_secret=secret, session=session)
+        
+        # Create Inbound Trunk
+        trunk = await lk.sip.create_sip_inbound_trunk(
+            lk_api.CreateSIPInboundTrunkRequest(
+                trunk=lk_api.SIPInboundTrunkInfo(
+                    name="Vobiz Inbound Trunk",
+                    numbers=[phone],
+                    auth_username=username,
+                    auth_password=password,
+                )
+            )
+        )
+        inbound_trunk_id = trunk.sip_trunk_id
+        await set_setting("INBOUND_TRUNK_ID", inbound_trunk_id)
+        os.environ["INBOUND_TRUNK_ID"] = inbound_trunk_id
+
+        # Create SIP Dispatch Rule routing inbound calls to room "inbound-" and dispatching "outbound-caller" agent
+        dispatch_rule = await lk.sip.create_sip_dispatch_rule(
+            lk_api.CreateSIPDispatchRuleRequest(
+                rule=lk_api.SIPDispatchRule(
+                    dispatch_rule_individual=lk_api.SIPDispatchRuleIndividual(
+                        room_prefix="inbound-",
+                        no_randomness=False,
+                    )
+                ),
+                trunk_ids=[inbound_trunk_id],
+                name="Vobiz Inbound Dispatch Rule",
+                room_config=lk_api.RoomConfiguration(
+                    agents=[lk_api.RoomAgentDispatch(
+                        agent_name="outbound-caller",
+                        metadata=json.dumps({"conversation_initiation": "agent", "inbound": True})
+                    )]
+                )
+            )
+        )
+        rule_id = dispatch_rule.sip_dispatch_rule_id
+        await set_setting("SIP_DISPATCH_RULE_ID", rule_id)
+        os.environ["SIP_DISPATCH_RULE_ID"] = rule_id
+
+        await lk.aclose()
+        await session.close()
+        return {
+            "status": "created",
+            "inbound_trunk_id": inbound_trunk_id,
+            "sip_dispatch_rule_id": rule_id
+        }
+    except Exception as exc:
+        logger.error("Inbound trunk/rule setup error: %s", exc)
+        raise HTTPException(500, f"Inbound setup failed: {exc}")
+
+
 # ── Logs ──────────────────────────────────────────────────────────────────────
 
 @app.get("/api/logs")
@@ -580,6 +667,7 @@ async def _dispatch_one(lk, lk_api, contact: dict, room_name: str,
             if profile.get("enabled_tools"): metadata["tools_override"] = profile["enabled_tools"]
             metadata["conversation_initiation"] = profile.get("conversation_initiation", "agent")
             if profile.get("first_message"): metadata["first_message"] = profile["first_message"]
+        await lk.room.create_room(lk_api.CreateRoomRequest(name=room_name, empty_timeout=300, max_participants=5))
         await lk.agent_dispatch.create_dispatch(
             lk_api.CreateAgentDispatchRequest(agent_name="outbound-caller", room=room_name, metadata=json.dumps(metadata))
         )
@@ -590,6 +678,11 @@ async def _dispatch_one(lk, lk_api, contact: dict, room_name: str,
 
 
 async def _run_campaign(campaign_id: str) -> None:
+    enable_outbound = await get_setting("ENABLE_OUTBOUND", "true")
+    if enable_outbound.lower() == "false":
+        logger.warning("Campaign %s run aborted because Outbound calling is disabled.", campaign_id)
+        return
+
     campaign = await get_campaign(campaign_id)
     if not campaign:
         return
